@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Default background and text for the entire app */
+  :root {
+    background-color: #0A0A0F;
+    color: #F0F0F5;
+  }
+}
+
+@layer utilities {
+  /* Glass card surface */
+  .glass-card {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  /* Accent-tinted glass (selected states, active cards) */
+  .glass-card-accent {
+    background-color: rgba(0, 229, 255, 0.06);
+    border-width: 1px;
+    border-color: rgba(0, 229, 255, 0.35);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  /* Primary CTA pill button */
+  .btn-primary {
+    height: 56px;
+    border-radius: 9999px;
+    background-color: #00E5FF;
+    padding-horizontal: 32px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Danger / SOS pill button */
+  .btn-danger {
+    height: 56px;
+    border-radius: 9999px;
+    background-color: #FF3D3D;
+    padding-horizontal: 32px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Ghost / secondary pill button */
+  .btn-ghost {
+    height: 56px;
+    border-radius: 9999px;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.15);
+    background-color: transparent;
+    padding-horizontal: 32px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Risk badge base */
+  .badge-low {
+    background-color: rgba(0, 230, 118, 0.12);
+    border-width: 1px;
+    border-color: rgba(0, 230, 118, 0.30);
+    border-radius: 9999px;
+    padding-horizontal: 12px;
+    padding-vertical: 5px;
+  }
+
+  .badge-medium {
+    background-color: rgba(255, 215, 64, 0.12);
+    border-width: 1px;
+    border-color: rgba(255, 215, 64, 0.30);
+    border-radius: 9999px;
+    padding-horizontal: 12px;
+    padding-vertical: 5px;
+  }
+
+  .badge-high {
+    background-color: rgba(255, 61, 61, 0.12);
+    border-width: 1px;
+    border-color: rgba(255, 61, 61, 0.30);
+    border-radius: 9999px;
+    padding-horizontal: 12px;
+    padding-vertical: 5px;
+  }
+
+  /* Input field */
+  .input-field {
+    height: 54px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.10);
+    padding-horizontal: 18px;
+  }
+
+  /* Option card (onboarding) */
+  .option-card {
+    height: 60px;
+    border-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.04);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.08);
+    flex-direction: row;
+    align-items: center;
+    padding-horizontal: 20px;
+  }
+
+  .option-card-selected {
+    height: 60px;
+    border-radius: 14px;
+    background-color: rgba(0, 229, 255, 0.08);
+    border-width: 1px;
+    border-color: rgba(0, 229, 255, 0.40);
+    flex-direction: row;
+    align-items: center;
+    padding-horizontal: 20px;
+  }
+
+  /* Onboarding progress bar track */
+  .progress-track {
+    height: 3px;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.08);
+    margin-horizontal: 20px;
+    margin-top: 16px;
+  }
+
+  /* Alert chip (Alerts screen) */
+  .alert-chip {
+    flex-direction: row;
+    align-items: center;
+    padding-horizontal: 10px;
+    padding-vertical: 5px;
+    border-radius: 9999px;
+    background-color: rgba(255, 61, 61, 0.10);
+    border-width: 1px;
+    border-color: rgba(255, 61, 61, 0.25);
+  }
+
+  /* Permission icon container */
+  .permission-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background-color: rgba(0, 229, 255, 0.10);
+    align-items: center;
+    justify-content: center;
+  }
+}
