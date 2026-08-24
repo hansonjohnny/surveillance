@@ -78,7 +78,7 @@ export async function makeCall(to: string, message: string): Promise<boolean> {
 
 // ─── Message builder ────────────────────────────────────────────────────────
 
-function buildAlertMessages(event: Event, contact: Contact) {
+function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
   const timestamp = new Date(event.timestamp).toLocaleString();
   const mapsLink = event.location
     ? `https://maps.google.com/?q=${event.location.lat},${event.location.lng}`
@@ -86,6 +86,7 @@ function buildAlertMessages(event: Event, contact: Contact) {
   const humanAddress = event.location?.address
     ? formatAddress(event.location.address)
     : null;
+  const ackUrl = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/ack-alert?alertId=${alertId}`;
 
   // ── SMS ──────────────────────────────────────────────────────────────────
   const smsMessage =
@@ -93,7 +94,8 @@ function buildAlertMessages(event: Event, contact: Contact) {
     (humanAddress ? `Address: ${humanAddress}\n` : "") +
     `Map: ${mapsLink}\n` +
     `AI detected: ${event.aiSummary}\n` +
-    `Time: ${timestamp}`;
+    `Time: ${timestamp}\n` +
+    `Seen this? Tap to confirm: ${ackUrl}`;
 
   // ── Email ─────────────────────────────────────────────────────────────────
   const emailSubject = `Safety Alert - ${contact.name} may need help`;
@@ -144,6 +146,8 @@ function buildAlertMessages(event: Event, contact: Contact) {
     `\nTRIGGER\n` +
     `-------\n` +
     `Source: ${event.source ?? "AI analysis"}\n\n` +
+    `Acknowledge this alert: ${ackUrl}\n` +
+    `(If we don't hear from you within 10 minutes, we'll also notify the backup contact.)\n\n` +
     `${"=".repeat(40)}\n` +
     `This alert was generated automatically by Surveillance AI.\n` +
     `If this is a false alarm, please contact ${contact.name} directly.`;
@@ -168,9 +172,10 @@ async function sendAlertChannels(
   event: Event,
   contact: Contact,
   isUrgent: boolean,
+  alertId: string,
 ): Promise<{ smsSent: boolean; emailSent: boolean; callMade: boolean }> {
   const { smsMessage, emailSubject, emailBody, callMessage } =
-    buildAlertMessages(event, contact);
+    buildAlertMessages(event, contact, alertId);
 
   const channelPromises: Promise<boolean>[] = [
     sendSMS(contact.phone, smsMessage),
@@ -213,6 +218,10 @@ export async function triggerAlert(
     const isUrgent =
       event.source === "manual" || (event.source?.includes("shake") ?? false);
 
+    // Generated up front (not after sending) so the ack link embedded in
+    // the SMS/email body points at this alert's real id.
+    const alertId = generateUUID();
+
     const online = await isOnline();
     if (!online) {
       console.warn(
@@ -222,7 +231,7 @@ export async function triggerAlert(
     }
 
     const channelResult = online
-      ? await sendAlertChannels(event, contact, isUrgent)
+      ? await sendAlertChannels(event, contact, isUrgent, alertId)
       : { smsSent: false, emailSent: false, callMade: false };
 
     console.log(
@@ -231,13 +240,16 @@ export async function triggerAlert(
 
     // ── Persist to store + Supabase ───────────────────────────────────────────
     const alert: Alert = {
-      id: generateUUID(),
+      id: alertId,
       eventId: event.id,
       timestamp: Date.now(),
       contactName: contact.name,
       ...channelResult,
       aiSummary: event.aiSummary,
       location: event.location,
+      acknowledgedAt: null,
+      escalatedAt: null,
+      backupContactName: null,
     };
 
     useAlertStore.getState().addAlertLocal(alert);
@@ -279,6 +291,7 @@ export async function retryQueuedAlert(
       item.event,
       item.contact,
       item.isUrgent,
+      item.alertId,
     );
     channelsSent = isFullyDelivered(result, item.isUrgent);
     useAlertStore.getState().updateAlert(item.alertId, result);

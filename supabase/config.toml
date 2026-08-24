@@ -5,3 +5,9 @@
 # function itself. Every other function keeps the default verify_jwt=true.
 [functions.share-location]
 verify_jwt = false
+
+# Same reasoning — tapped from an SMS/email link, no Authorization header
+# available. Security is the alert's own unguessable UUID, checked inside
+# the function.
+[functions.ack-alert]
+verify_jwt = false

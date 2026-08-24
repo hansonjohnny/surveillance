@@ -9,7 +9,6 @@ import { useLiveShareStore } from "../store/useLiveShareStore";
 import { useSessionStore } from "../store/useSessionStore";
 import { useSettingsStore } from "../store/useSettingsStore";
 import type { Contact, Event, RiskLevel } from "../types";
-import { triggerAlert } from "./alerts";
 import {
   analyseAudioTranscript,
   recordAudioClip,
@@ -20,6 +19,7 @@ import { generateUUID } from "./id";
 import { getCurrentLocation, reverseGeocode } from "./location";
 import { pushLiveLocationUpdate } from "./liveShare";
 import { sendLocalNotification } from "./notifications";
+import { schedulePendingAlert } from "./pendingAlert";
 import { analyseImage } from "./vision";
 
 function combineRisks(a: RiskLevel, b: RiskLevel | null): RiskLevel {
@@ -152,11 +152,9 @@ export async function runMonitoringCycle(): Promise<void> {
               phone: contactPhone,
               email: contactEmail,
             };
-            triggerAlert(
+            schedulePendingAlert(
               { ...event, riskLevel, aiSummary: summary },
               contact,
-            ).catch((err) =>
-              console.error("[monitoring] triggerAlert failed:", err),
             );
           } else {
             console.warn(
@@ -235,11 +233,9 @@ export async function runMonitoringCycle(): Promise<void> {
                 phone: contactPhone,
                 email: contactEmail,
               };
-              triggerAlert(
+              schedulePendingAlert(
                 { ...event, audioSummary, riskLevel: consolidatedRisk },
                 contact,
-              ).catch((err) =>
-                console.error("[monitoring] triggerAlert (audio) failed:", err),
               );
             }
           }

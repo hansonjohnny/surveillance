@@ -38,8 +38,14 @@ export async function createShareLink(
     return null;
   }
 
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const url = `${supabaseUrl}/functions/v1/share-location?token=${token}`;
+  // The page is hosted on GitHub Pages, not Supabase — Supabase's shared
+  // *.supabase.co domain (Edge Functions AND Storage) force-rewrites
+  // text/html responses to text/plain as an anti-phishing measure (only a
+  // Pro-plan custom domain avoids it), so a real static host is required.
+  // The static page polls share-location for JSON data, which stays a
+  // Supabase Edge Function — that restriction only applies to HTML. See
+  // share.html (repo root) and supabase/functions/share-location.
+  const url = `https://hansonjohnny.github.io/surveillance/share.html?token=${token}`;
 
   return { id, token, url, sessionId, expiresAt };
 }

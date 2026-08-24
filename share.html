@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Surveillance AI — Live Share</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:#0A0A0F; color:#F0F0F5;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #map { position:absolute; inset:0; }
+  .leaflet-control-attribution { display:none; }
+  .banner { position:absolute; top:0; left:0; right:0; z-index:1000; padding:14px 16px;
+    background:rgba(10,10,15,0.90); border-bottom:1px solid rgba(255,255,255,0.1);
+    display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .banner h1 { font-size:14px; margin:0; letter-spacing:0.3px; font-weight:600; }
+  .banner .sub { font-size:12px; color:#8888A0; margin-top:2px; }
+  .dot { width:8px; height:8px; border-radius:4px; background:#00E676; flex-shrink:0; }
+  .dot.ended { background:#555568; }
+  .card { text-align:center; padding:32px; max-width:340px; margin:0 auto; padding-top:120px; }
+  .card h1 { font-size:20px; margin:0 0 8px; }
+  .card p { color:#8888A0; font-size:14px; line-height:1.5; margin:0; }
+</style>
+</head>
+<body>
+  <div class="banner">
+    <div>
+      <h1>Live Location</h1>
+      <div class="sub" id="status">Loading…</div>
+    </div>
+    <div class="dot" id="dot"></div>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Served via GitHub Pages, not Supabase — Supabase's shared
+    // *.supabase.co domain (Edge Functions AND Storage) force-rewrites
+    // text/html responses to text/plain as an anti-phishing measure
+    // (only a Pro-plan custom domain avoids it), so a real static host is
+    // required for this page to actually render. The token comes from
+    // this page's own URL, and every data fetch goes to the
+    // share-location Edge Function's absolute URL, which stays JSON-only
+    // and is unaffected by that restriction.
+    var FUNCTIONS_BASE = "https://snhxbkmjqhelmjjpejme.supabase.co/functions/v1/share-location";
+    var TOKEN = new URLSearchParams(location.search).get("token");
+
+    var state = { lat: null, lng: null, updatedAt: null, active: true };
+    var map = null;
+    var marker = null;
+
+    function initMap() {
+      map = L.map('map', { zoomControl: true, attributionControl: false }).setView([0, 0], 2);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd', maxZoom: 19,
+      }).addTo(map);
+    }
+
+    function setMarker(lat, lng) {
+      if (marker) { marker.setLatLng([lat, lng]); return; }
+      marker = L.circleMarker([lat, lng], {
+        radius: 9, color: '#00E5FF', weight: 2, fillColor: '#00E5FF', fillOpacity: 0.5,
+      }).addTo(map);
+    }
+
+    function relativeTime(iso) {
+      if (!iso) return 'never';
+      var secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+      if (secs < 60) return secs + 's ago';
+      var mins = Math.floor(secs / 60);
+      if (mins < 60) return mins + 'm ago';
+      return Math.floor(mins / 60) + 'h ago';
+    }
+
+    function render() {
+      var statusEl = document.getElementById('status');
+      var dotEl = document.getElementById('dot');
+      if (state.lat != null && state.lng != null) {
+        var wasUnset = map.getZoom() < 3;
+        setMarker(state.lat, state.lng);
+        if (wasUnset) map.setView([state.lat, state.lng], 16);
+      }
+      if (!state.active) {
+        statusEl.textContent = 'Session ended — last known location, updated ' + relativeTime(state.updatedAt);
+        dotEl.className = 'dot ended';
+      } else {
+        statusEl.textContent = 'Updated ' + relativeTime(state.updatedAt);
+        dotEl.className = 'dot';
+      }
+    }
+
+    function showInvalid(message) {
+      document.body.innerHTML =
+        '<div class="card"><h1>Link unavailable</h1><p>' + message + '</p></div>';
+    }
+
+    function poll() {
+      fetch(FUNCTIONS_BASE + '?token=' + encodeURIComponent(TOKEN))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.error) {
+            showInvalid(
+              data.error === 'Link expired' ? 'This link has expired.' :
+              data.error === 'Link revoked' ? 'Sharing was turned off for this link.' :
+              "This link doesn't exist or has been removed."
+            );
+            return;
+          }
+          state = data;
+          render();
+        })
+        .catch(function () {
+          document.getElementById('status').textContent = 'Connection lost — retrying…';
+        });
+    }
+
+    if (!TOKEN) {
+      showInvalid('This link is missing its access token.');
+    } else {
+      initMap();
+      render();
+      setInterval(render, 1000);
+      poll();
+      setInterval(poll, 5000);
+    }
+  </script>
+</body>
+</html>

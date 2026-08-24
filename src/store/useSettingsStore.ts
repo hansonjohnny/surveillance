@@ -12,6 +12,11 @@ type Settings = {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  // Escalation contact — notified if the primary contact never acknowledges
+  // a High-risk alert within the escalation window (see lib/escalation.ts).
+  backupContactName: string;
+  backupContactPhone: string;
+  backupContactEmail: string;
   monitoringInterval: 20 | 30 | 60;
   shakeSensitivity: ShakeSensitivity;
   stealthMode: boolean;
@@ -42,6 +47,9 @@ export const useSettingsStore = create<SettingsStore>()(
       contactName: '',
       contactPhone: '',
       contactEmail: '',
+      backupContactName: '',
+      backupContactPhone: '',
+      backupContactEmail: '',
       monitoringInterval: 30,
       shakeSensitivity: 'medium',
       stealthMode: false,

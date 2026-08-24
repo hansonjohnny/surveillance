@@ -71,6 +71,12 @@ export type Alert = {
   callMade: boolean;
   aiSummary: string;
   location: Location | null;
+  // Escalation — see lib/escalation.ts. acknowledgedAt is set when the
+  // contact taps the ack link in the SMS/email; escalatedAt/backupContactName
+  // are set if the escalation window elapses without an acknowledgment.
+  acknowledgedAt: number | null;
+  escalatedAt: number | null;
+  backupContactName: string | null;
 };
 
 // A High-risk alert that didn't fully go out — channels, Supabase sync, or

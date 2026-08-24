@@ -567,6 +567,7 @@ function ProfileModal({
 
 function EditContactModal({
   visible,
+  title = 'Emergency Contact',
   name,
   phone,
   email,
@@ -574,6 +575,7 @@ function EditContactModal({
   onClose,
 }: {
   visible: boolean;
+  title?: string;
   name: string;
   phone: string;
   email: string;
@@ -602,7 +604,7 @@ function EditContactModal({
   }
 
   return (
-    <Sheet visible={visible} onClose={onClose} title="Emergency Contact">
+    <Sheet visible={visible} onClose={onClose} title={title}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, gap: 16, paddingBottom: 8 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View>
           <FieldLabel label="Full Name" />
@@ -1136,6 +1138,9 @@ export default function SettingsScreen() {
   const storedContactName   = useSettingsStore((s) => s.contactName);
   const storedContactPhone  = useSettingsStore((s) => s.contactPhone);
   const storedContactEmail  = useSettingsStore((s) => s.contactEmail);
+  const storedBackupName    = useSettingsStore((s) => s.backupContactName);
+  const storedBackupPhone   = useSettingsStore((s) => s.backupContactPhone);
+  const storedBackupEmail   = useSettingsStore((s) => s.backupContactEmail);
   const storedWellnessTime  = useSettingsStore((s) => s.wellnessCheckInTime);
   const storedLogClearScheduledAt = useSettingsStore((s) => s.logClearScheduledAt);
   const updateSettings      = useSettingsStore((s) => s.updateSettings);
@@ -1167,6 +1172,7 @@ export default function SettingsScreen() {
   // Modal open states
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [contactModalOpen, setContactModalOpen] = useState(false);
+  const [backupContactModalOpen, setBackupContactModalOpen] = useState(false);
   const [monitoringModalOpen, setMonitoringModalOpen] = useState(false);
   const [behaviourModalOpen, setBehaviourModalOpen] = useState(false);
   const [eventLogModalOpen, setEventLogModalOpen] = useState(false);
@@ -1314,6 +1320,17 @@ export default function SettingsScreen() {
     });
   }
 
+  // Backup contact — escalation.ts reads these straight from AsyncStorage,
+  // so unlike the primary contact this only needs to live in Settings/local
+  // storage, not the `contacts` table.
+  function handleSaveBackupContact(name: string, phone: string, email: string) {
+    updateSettings({
+      backupContactName: name,
+      backupContactPhone: phone,
+      backupContactEmail: email,
+    });
+  }
+
   // ── Profile save ─────────────────────────────────────────────────────────────
 
   async function handleSaveProfile(name: string, newAvatarUri: string | null) {
@@ -1351,7 +1368,7 @@ export default function SettingsScreen() {
               await AsyncStorage.clear();
               await SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1396,7 +1413,7 @@ export default function SettingsScreen() {
                 SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY),
               ]);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1554,6 +1571,12 @@ export default function SettingsScreen() {
               onPress={() => setContactModalOpen(true)}
             />
             <MenuRow
+              icon={<ShieldAlert size={18} color={colors.risk.medium} strokeWidth={1.5} />}
+              label="Backup Contact"
+              value={storedBackupName || 'Escalates after 10 min'}
+              onPress={() => setBackupContactModalOpen(true)}
+            />
+            <MenuRow
               icon={<Vibrate size={18} color={CYAN} strokeWidth={1.5} />}
               label="Monitoring"
               value={intervalLabel}
@@ -1663,6 +1686,15 @@ export default function SettingsScreen() {
         email={storedContactEmail}
         onSave={handleSaveContact}
         onClose={() => setContactModalOpen(false)}
+      />
+      <EditContactModal
+        visible={backupContactModalOpen}
+        title="Backup Contact"
+        name={storedBackupName}
+        phone={storedBackupPhone}
+        email={storedBackupEmail}
+        onSave={handleSaveBackupContact}
+        onClose={() => setBackupContactModalOpen(false)}
       />
       <MonitoringModal
         visible={monitoringModalOpen}

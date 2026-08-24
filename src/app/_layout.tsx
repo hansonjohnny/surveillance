@@ -45,7 +45,10 @@ import { Stack, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import "../../global.css";
+import { PendingAlertBanner } from "../components/alerts/PendingAlertBanner";
+import { checkEscalations } from "../lib/escalation";
 import { startOfflineQueueWatcher } from "../lib/offlineQueue";
 import { setupNotificationHandler } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
@@ -62,10 +65,12 @@ import {
   ONBOARDING_SECURE_KEY,
   useSettingsStore,
 } from "../store/useSettingsStore";
-// Side-effect import — registers WELLNESS_CHECK_TASK with TaskManager at module
-// load time so the background runtime can find the task definition.
+// Side-effect imports — register background tasks with TaskManager at
+// module load time so the background runtime can find the task definitions.
 import "../tasks/wellnessTask";
+import "../tasks/escalationTask";
 import { registerWellnessTask } from "../tasks/wellnessTask";
+import { registerEscalationTask } from "../tasks/escalationTask";
 import { colors } from "../theme/colors";
 
 SplashScreen.preventAutoHideAsync().catch(console.warn);
@@ -247,6 +252,7 @@ export default function RootLayout() {
       // Both calls are safe to repeat — they no-op if already registered.
       registerWellnessCategory().catch(console.warn);
       registerWellnessTask().catch(console.warn);
+      registerEscalationTask().catch(console.warn);
 
       setSession(s);
       setReady(true);
@@ -348,7 +354,29 @@ export default function RootLayout() {
     return startOfflineQueueWatcher();
   }, []);
 
-  // ── 6. Routing effect ─────────────────────────────────────────────────────
+  // ── 6. Escalation check on foreground ─────────────────────────────────────
+  // The background task (registered above) checks on its own coarse
+  // ~5min-at-best cadence; this catches most real cases faster by also
+  // checking the moment the user actually opens the app. rehydrate() pulls
+  // any change checkEscalations() made to AsyncStorage back into the live
+  // store so the Alerts screen reflects it without needing a restart.
+
+  useEffect(() => {
+    checkEscalations()
+      .then(() => useAlertStore.persist.rehydrate())
+      .catch(console.warn);
+
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      checkEscalations()
+        .then(() => useAlertStore.persist.rehydrate())
+        .catch(console.warn);
+    });
+
+    return () => sub.remove();
+  }, []);
+
+  // ── 7. Routing effect ─────────────────────────────────────────────────────
 
   useEffect(() => {
     // Wait for fonts (prevents flash of unstyled text) and session check.
@@ -402,12 +430,15 @@ export default function RootLayout() {
   }, [fontsLoaded, fontError, ready, isAuthenticated, pendingReset]);
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: colors.bg.primary },
-        animation: "slide_from_right",
-      }}
-    />
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.bg.primary },
+          animation: "slide_from_right",
+        }}
+      />
+      <PendingAlertBanner />
+    </>
   );
 }

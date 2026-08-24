@@ -6,6 +6,7 @@ const RED   = '#FF3D3D'
 const GREEN = '#00E676'
 const GREY  = '#555568'
 const CYAN  = '#00E5FF'
+const AMBER = '#FFD740'
 
 function formatFull(ms: number): string {
   const d = new Date(ms)
@@ -111,6 +112,40 @@ export function AlertCard({ alert }: Props) {
             {formatFull(alert.timestamp)}
           </Text>
         </View>
+
+        {/* Acknowledgment / escalation status — see lib/escalation.ts */}
+        {(alert.acknowledgedAt || alert.escalatedAt) && (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              paddingHorizontal: 12,
+              paddingVertical: 5,
+              borderRadius: 9999,
+              marginBottom: 12,
+              backgroundColor: alert.acknowledgedAt
+                ? 'rgba(0, 230, 118, 0.10)'
+                : 'rgba(255, 215, 64, 0.10)',
+              borderWidth: 1,
+              borderColor: alert.acknowledgedAt
+                ? 'rgba(0, 230, 118, 0.30)'
+                : 'rgba(255, 215, 64, 0.30)',
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: 'JetBrainsMono_400Regular',
+                fontSize: 11,
+                letterSpacing: 0.8,
+                textTransform: 'uppercase',
+                color: alert.acknowledgedAt ? GREEN : AMBER,
+              }}
+            >
+              {alert.acknowledgedAt
+                ? 'Acknowledged'
+                : `Escalated to ${alert.backupContactName}`}
+            </Text>
+          </View>
+        )}
 
         {/* Sent to [name] */}
         <Text

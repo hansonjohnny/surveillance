@@ -49,17 +49,28 @@ export default function LiveScreen() {
     !!activeLink && activeLink.sessionId === sessionId;
 
   async function handleSharePress() {
+    console.log(
+      `[live] share tapped — sessionId=${sessionId} userId=${userId} isSharingThisSession=${isSharingThisSession} sharing=${sharing}`,
+    );
+
     if (isSharingThisSession && activeLink) {
       await revokeShareLink(activeLink.id);
       clearActiveLink();
       return;
     }
 
-    if (!sessionId || !userId || sharing) return;
+    if (!sessionId || !userId || sharing) {
+      console.warn("[live] share tap ignored — missing sessionId/userId or already in flight");
+      return;
+    }
     setSharing(true);
     try {
       const link = await createShareLink(sessionId, userId);
-      if (!link) return;
+      if (!link) {
+        console.warn("[live] createShareLink returned null — see [liveShare] error above");
+        return;
+      }
+      console.log("[live] share link created:", link.url);
       setActiveLink(link);
       await Share.share({
         message: `I'm sharing my live location with you via Surveillance AI: ${link.url}`,
@@ -116,15 +127,18 @@ export default function LiveScreen() {
 
       <LiveMap location={location} path={riskPath} />
 
-      {/* GPS coordinates chip — floats top-right */}
+      {/* GPS coordinates chip — floats top-right. box-none (not none) so the
+          container stays transparent to touches while the Share chip inside
+          it — added later — can still be tapped; "none" would block its
+          entire subtree regardless of a child's own pointerEvents. */}
       <SafeAreaView
         edges={["top"]}
+        pointerEvents="box-none"
         style={{
           position: "absolute",
           top: 0,
           right: 0,
           left: 0,
-          pointerEvents: "none",
         }}
       >
         <View
@@ -227,7 +241,6 @@ export default function LiveScreen() {
                 paddingHorizontal: 12,
                 paddingVertical: 7,
                 borderRadius: 9999,
-                pointerEvents: "auto",
                 backgroundColor: isSharingThisSession
                   ? "rgba(0, 229, 255, 0.10)"
                   : "rgba(10, 10, 15, 0.85)",
