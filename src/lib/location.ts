@@ -1,9 +1,12 @@
 // GPS tracking utilities for the monitoring loop.
 // requestLocationPermission requests foreground permission (and background on iOS).
-// startLocationTracking uses watchPositionAsync (foreground watcher only).
-// True background execution is handled by the background monitoring task
-// via Location.startLocationUpdatesAsync — see tasks/monitoringTask.ts.
+// startLocationTracking uses watchPositionAsync (foreground watcher, for the
+// Live screen's fine-grained trail while the app is open).
+// True background tracking uses Location.startLocationUpdatesAsync — see
+// startBackgroundLocationTracking below and tasks/locationTask.ts for the
+// task definition it's paired with.
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { Alert, Platform } from "react-native";
 import type { Address } from "../types";
@@ -142,4 +145,90 @@ export async function startLocationTracking(
 
 export function getGoogleMapsLink(lat: number, lng: number): string {
   return `https://maps.google.com/?q=${lat},${lng}`;
+}
+
+// ─── Background location ────────────────────────────────────────────────────
+
+export const LOCATION_TASK_NAME = "BACKGROUND_LOCATION_TASK";
+
+const SESSION_STORAGE_KEY = "@surveillance_ai/session";
+const MAX_LOCATION_HISTORY = 2000; // must match useSessionStore's own cap
+
+// Called from tasks/locationTask.ts, which can run in a headless JS context
+// if Android fully kills and briefly relaunches the process despite the
+// foreground service (a known edge case) — so this reads and rewrites the
+// persisted AsyncStorage state directly rather than going through
+// useSessionStore.getState().updateLocation(), which would persist an
+// unhydrated (empty) history array over the real one in that scenario. Same
+// precaution as lib/escalation.ts's updateLocalAlert.
+export async function updateLocalSessionLocation(
+  lat: number,
+  lng: number,
+): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const state = parsed.state;
+    if (!state?.isActive) return; // no active session to attach this update to
+
+    parsed.state = {
+      ...state,
+      lastLocation: { lat, lng },
+      locationHistory: [
+        ...(state.locationHistory ?? []),
+        { lat, lng, timestamp: Date.now() },
+      ].slice(-MAX_LOCATION_HISTORY),
+    };
+    await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
+  } catch (err) {
+    console.error("[location] updateLocalSessionLocation failed:", err);
+  }
+}
+
+// Starts/stops with the session (see useSessionStore) rather than once at
+// app launch — unlike the Wellness/Escalation background tasks, there's no
+// point receiving location updates when no session is running. The
+// foregroundService option is required on Android 8+ for any background
+// location tracking and shows a persistent notification while active.
+export async function startBackgroundLocationTracking(): Promise<void> {
+  try {
+    const { status } = await Location.getBackgroundPermissionsAsync();
+    if (status !== "granted") {
+      console.warn(
+        "[location] startBackgroundLocationTracking: background permission not granted",
+      );
+      return;
+    }
+
+    const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(
+      LOCATION_TASK_NAME,
+    ).catch(() => false);
+    if (alreadyStarted) return;
+
+    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 5,
+      foregroundService: {
+        notificationTitle: "Surveillance AI",
+        notificationBody: "Monitoring your location",
+      },
+    });
+  } catch (err) {
+    console.error("[location] startBackgroundLocationTracking failed:", err);
+  }
+}
+
+export async function stopBackgroundLocationTracking(): Promise<void> {
+  try {
+    const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(
+      LOCATION_TASK_NAME,
+    ).catch(() => false);
+    if (!alreadyStarted) return;
+
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+  } catch (err) {
+    console.error("[location] stopBackgroundLocationTracking failed:", err);
+  }
 }

@@ -1,5 +1,9 @@
 import { generateUUID } from "@/lib/id";
-import { startLocationTracking as _startLocationTracking } from "@/lib/location";
+import {
+  startBackgroundLocationTracking,
+  startLocationTracking as _startLocationTracking,
+  stopBackgroundLocationTracking,
+} from "@/lib/location";
 import type { ShakeSensitivity } from "@/lib/sensors";
 import {
   startShakeDetection as _startShakeDetection,
@@ -75,6 +79,16 @@ export const useSessionStore = create<SessionStore>()(
           locationHistory: [],
         });
 
+        // Starts receiving location updates even while backgrounded/screen-
+        // locked (requires "Always" location permission, granted during
+        // onboarding). See lib/location.ts / tasks/locationTask.ts.
+        startBackgroundLocationTracking().catch((err) =>
+          console.error(
+            "[useSessionStore] startBackgroundLocationTracking failed:",
+            err,
+          ),
+        );
+
         // Create the Supabase row up front (not lazily on first alert) so a
         // share link has a session to attach to from the moment monitoring
         // starts. Fire-and-forget — local state is already the source of
@@ -105,6 +119,13 @@ export const useSessionStore = create<SessionStore>()(
           lastAISummary: null,
           cycleCount: 0,
         });
+
+        stopBackgroundLocationTracking().catch((err) =>
+          console.error(
+            "[useSessionStore] stopBackgroundLocationTracking failed:",
+            err,
+          ),
+        );
 
         if (sessionId && userId) {
           supabase

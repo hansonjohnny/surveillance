@@ -651,6 +651,9 @@ function MonitoringModal({
         <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
           <ShakeSensitivityPicker value={sensitivity} onChange={onSensitivityChange} />
         </View>
+        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, lineHeight: 18, color: '#555568', paddingHorizontal: 4 }}>
+          Location and audio monitoring continue while the app is in the background or your screen is locked. Camera snapshots pause in the background (an iOS/Android restriction) and resume automatically when you reopen the app.
+        </Text>
         <CyanButton label="Done" onPress={onClose} style={{ marginTop: 4 }} />
       </View>
     </Sheet>

@@ -67,8 +67,12 @@ import {
 } from "../store/useSettingsStore";
 // Side-effect imports — register background tasks with TaskManager at
 // module load time so the background runtime can find the task definitions.
+// locationTask has no register*Task() call here — it's started/stopped with
+// the session itself (see useSessionStore), but still needs its definition
+// registered up front like the other two.
 import "../tasks/wellnessTask";
 import "../tasks/escalationTask";
+import "../tasks/locationTask";
 import { registerWellnessTask } from "../tasks/wellnessTask";
 import { registerEscalationTask } from "../tasks/escalationTask";
 import { colors } from "../theme/colors";

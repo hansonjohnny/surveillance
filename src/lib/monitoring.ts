@@ -4,6 +4,7 @@
 // The event appears in the log right after snapshot + GPS — no waiting for
 // GPT-4o or Whisper. Both AI calls patch the existing event when they resolve.
 
+import { AppState } from "react-native";
 import { useAlertStore } from "../store/useAlertStore";
 import { useLiveShareStore } from "../store/useLiveShareStore";
 import { useSessionStore } from "../store/useSessionStore";
@@ -53,9 +54,16 @@ export async function runMonitoringCycle(): Promise<void> {
       ? recordAudioClip(8000)
       : Promise.resolve(null);
 
+    // Camera access is impossible while backgrounded — an OS-level privacy
+    // restriction on both iOS and Android, not something any code change
+    // works around. Skip the attempt entirely rather than let it fail;
+    // audio + GPS keep running as normal (see lib/audio.ts's
+    // allowsBackgroundRecording and lib/location.ts's background tracking).
+    const isForeground = AppState.currentState === "active";
+
     // Snapshot and GPS in parallel.
     const [photoUri, location] = await Promise.all([
-      takeSnapshot(),
+      isForeground ? takeSnapshot() : Promise.resolve(null),
       getCurrentLocation(),
     ]);
 
@@ -118,7 +126,11 @@ export async function runMonitoringCycle(): Promise<void> {
         }
 
         const riskLevel = result?.riskLevel ?? "low";
-        const summary = result?.summary ?? "No visual analysis available.";
+        const summary =
+          result?.summary ??
+          (isForeground
+            ? "No visual analysis available."
+            : "Camera unavailable while backgrounded.");
 
         useAlertStore.getState().updateEvent(event.id, {
           riskLevel,

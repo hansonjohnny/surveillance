@@ -83,9 +83,12 @@ export async function recordAudioClip(
       return null;
     }
 
-    // staysActiveInBackground keeps the session active across interruptions and
-    // helps it reactivate faster once a phone call ends.
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, staysActiveInBackground: true });
+    // allowsBackgroundRecording is what keeps the app process alive at all
+    // while backgrounded/screen-locked (iOS suspends an app the moment it's
+    // backgrounded unless it's actively doing something the OS recognises,
+    // like recording audio) — this is the mechanism the whole background
+    // monitoring loop depends on, not just this one clip.
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, allowsBackgroundRecording: true });
 
     recorder = new AudioModule.AudioRecorder(WHISPER_RECORDING_OPTIONS);
     await recorder.prepareToRecordAsync();
@@ -103,7 +106,7 @@ export async function recordAudioClip(
       await new Promise<void>((resolve) => setTimeout(resolve, 400));
     }
 
-    await setAudioModeAsync({ allowsRecording: false, staysActiveInBackground: false });
+    await setAudioModeAsync({ allowsRecording: false, allowsBackgroundRecording: false });
 
     const uri = recorder.uri;
     console.log("[audio] recorded uri:", uri);
