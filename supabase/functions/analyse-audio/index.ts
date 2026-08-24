@@ -144,6 +144,8 @@ Analyse this transcript for potential threats to the person carrying the recordi
 
 Look for: threats, aggressive language, sounds of distress, instructions to harm someone, or anything alarming.
 
+If the transcript is very short, just noise, filler words, or otherwise does not contain any clear speech content, this is NOT evidence of danger by itself. Rate it low risk and say in the summary that nothing clear was heard. Never rate high risk based only on an unclear or fragmentary transcript -- only rate high when the words themselves clearly indicate a threat or distress.
+
 Respond ONLY with JSON:
 {
   "riskLevel": "low" | "medium" | "high",
