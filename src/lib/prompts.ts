@@ -13,9 +13,16 @@ Context: ${situation}
 Analyse this image for potential safety risks. Look for:
 - Signs of physical confrontation or aggression
 - People appearing distressed or threatened
-- Dangerous environments (dark alleys, isolated areas)
+- Visible signs of an unsafe setting, such as a weapon, physical restraint, or a hostile person approaching
 - Suspicious behaviour directed at the camera holder
-- Any situation that could indicate immediate danger
+
+If the image is blank, mostly black, blurry, out of focus, or otherwise
+does not clearly show the scene (for example the phone was in a pocket
+or bag, or it is simply a dark room), this is NOT evidence of danger by
+itself. Rate it low risk and say in the summary that the image was not
+clear enough to analyse. Never rate high risk based only on darkness or
+a lack of visibility -- only rate high when you can clearly see specific
+evidence of danger in the image.
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -27,7 +34,7 @@ Respond ONLY with a JSON object in this exact format:
 
 Do not use em-dashes in any text. Be conservative -- only rate
 high if there is clear evidence of danger. Rate low for normal
-scenes.
+scenes or images too unclear to assess.
 `;
 
 export const AUDIO_ANALYSIS_PROMPT = (transcript: string) => `

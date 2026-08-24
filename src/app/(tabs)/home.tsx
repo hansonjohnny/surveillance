@@ -21,6 +21,7 @@ import { triggerAlert } from "../../lib/alerts";
 import { generateUUID } from "../../lib/id";
 import { getCurrentLocation } from "../../lib/location";
 import { runMonitoringCycle } from "../../lib/monitoring";
+import { sendLocalNotification } from "../../lib/notifications";
 import { isCapReached } from "../../lib/plans";
 import { buildRiskTaggedPath, countRisks } from "../../lib/riskPath";
 import { useAlertStore } from "../../store/useAlertStore";
@@ -89,8 +90,11 @@ export default function HomeScreen() {
     stopSession,
     startLocationHistoryTracking,
     stopLocationHistoryTracking,
+    startShakeDetection,
+    stopShakeDetection,
   } = useSessionStore();
   const monitoringInterval = useSettingsStore((s) => s.monitoringInterval);
+  const shakeSensitivity = useSettingsStore((s) => s.shakeSensitivity);
   const stealthMode = useSettingsStore((s) => s.stealthMode);
   const plan = useSettingsStore((s) => s.plan);
   const todayUsage = useSettingsStore((s) => s.todayUsage);
@@ -151,6 +155,17 @@ export default function HomeScreen() {
     return () => stopLocationHistoryTracking();
   }, [isActive]);
 
+  // Shake detection — runs its own continuous accelerometer listener,
+  // completely independent of the timed monitoring cycle (see lib/sensors.ts).
+  // A shake bypasses the AI cycle entirely and fires an instant High-risk
+  // alert, same as Manual SOS, since a sustained impact is a high-confidence
+  // signal on its own. Restarts if the sensitivity setting changes mid-session.
+  useEffect(() => {
+    if (!isActive) return;
+    startShakeDetection(shakeSensitivity, handleShake);
+    return () => stopShakeDetection();
+  }, [isActive, shakeSensitivity]);
+
   // Archives the just-ended session's risk-tagged path so it can be reviewed
   // later from the History tab, then stops the session as normal.
   function handleStopSession() {
@@ -170,6 +185,51 @@ export default function HomeScreen() {
       }
     }
     stopSession();
+  }
+
+  // Fired by the accelerometer listener above on a sustained impact (see
+  // lib/sensors.ts — a g-force spike held for 500ms, with a 5s cooldown so
+  // one fall doesn't fire repeatedly). No AI call, no cancel window — a
+  // physical impact is high-confidence on its own.
+  async function handleShake() {
+    const { contactName, contactPhone, contactEmail } =
+      useSettingsStore.getState();
+    if (!contactPhone || !contactEmail) {
+      console.warn("[home] Shake detected but no contact configured.");
+      return;
+    }
+
+    const location = await getCurrentLocation();
+    const event: Event = {
+      id: generateUUID(),
+      sessionId: useSessionStore.getState().sessionId ?? generateUUID(),
+      timestamp: Date.now(),
+      riskLevel: "high",
+      aiSummary: "Sudden impact detected.",
+      audioSummary: undefined,
+      audioUri: undefined,
+      photoUri: null,
+      transcript: undefined,
+      location,
+      source: "shake",
+    };
+    useAlertStore.getState().addEvent(event);
+
+    sendLocalNotification(
+      "HIGH RISK DETECTED",
+      "Impact detected — alerting your emergency contact.",
+    ).catch((err) =>
+      console.error("[home] sendLocalNotification (shake) failed:", err),
+    );
+
+    const contact: Contact = {
+      name: contactName || "Emergency Contact",
+      phone: contactPhone,
+      email: contactEmail,
+    };
+    triggerAlert(event, contact).catch((err) =>
+      console.error("[home] Shake triggerAlert failed:", err),
+    );
   }
 
   function handleManualSOS() {
