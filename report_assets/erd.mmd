@@ -1,0 +1,67 @@
+erDiagram
+    USERS ||--o| SETTINGS : has
+    USERS ||--o{ SESSIONS : starts
+    USERS ||--o{ EVENTS : owns
+    USERS ||--o{ ALERTS : owns
+    USERS ||--o{ CONTACTS : registers
+    USERS ||--o{ AI_USAGE : accumulates
+    SESSIONS ||--o{ EVENTS : contains
+    EVENTS ||--o| ALERTS : triggers
+
+    USERS {
+        uuid id PK
+        text plan
+        timestamptz created_at
+    }
+    SESSIONS {
+        uuid id PK
+        uuid user_id FK
+        timestamptz started_at
+        timestamptz ended_at
+        integer total_cycles
+    }
+    EVENTS {
+        uuid id PK
+        uuid session_id FK
+        uuid user_id FK
+        timestamptz timestamp
+        text risk_level
+        text ai_summary
+        text photo_url
+        text transcript
+        double latitude
+        double longitude
+    }
+    ALERTS {
+        uuid id PK
+        uuid event_id FK
+        uuid user_id FK
+        timestamptz timestamp
+        text contact_name
+        boolean sms_sent
+        boolean email_sent
+        boolean call_made
+        text ai_summary
+        double latitude
+        double longitude
+    }
+    CONTACTS {
+        uuid id PK
+        uuid user_id FK
+        text name
+        text phone
+        text email
+    }
+    SETTINGS {
+        uuid id PK
+        uuid user_id FK
+        integer monitoring_interval
+        text shake_sensitivity
+        boolean stealth_mode
+        text wellness_checkin_time
+    }
+    AI_USAGE {
+        uuid user_id PK,FK
+        text date PK
+        integer call_count
+    }

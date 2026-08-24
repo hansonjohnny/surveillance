@@ -46,3 +46,10 @@ example
 # Firebase credentials
 google-services.json
 GoogleService-Info.plist
+
+# Supabase CLI local session state (project ref, pooler URL, tool versions) —
+# regenerated per machine by `supabase link` / `supabase start`, not shared state.
+supabase/.temp/
+
+# Office lock files (created while a .docx/.pptx is open)
+~$*

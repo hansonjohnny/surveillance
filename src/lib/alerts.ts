@@ -2,10 +2,29 @@
 // high-risk event is detected. All three channels call Supabase Edge Functions
 // so API keys never reach the client bundle.
 
-import type { Alert, Contact, Event } from "../types";
 import { useAlertStore } from "../store/useAlertStore";
-import { supabase } from "./supabase";
+import { useOfflineQueueStore } from "../store/useOfflineQueueStore";
+import type { Alert, Contact, Event, QueuedAlert } from "../types";
+import { generateUUID } from "./id";
 import { formatAddress } from "./location";
+import { isOnline } from "./network";
+import { supabase } from "./supabase";
+
+// supabase.functions.invoke() throws a generic "non-2xx" error that hides the
+// actual { success:false, error } body the edge function returned — pull the
+// real reason out of the response so failures are diagnosable from logs.
+async function logFunctionError(label: string, err: unknown): Promise<void> {
+  const context = (err as { context?: Response })?.context;
+  if (context && typeof context.json === "function") {
+    try {
+      console.error(`[alerts] ${label}:`, await context.json());
+      return;
+    } catch {
+      // fall through to generic logging below
+    }
+  }
+  console.error(`[alerts] ${label}:`, err);
+}
 
 // ─── Channel helpers ─────────────────────────────────────────────────────────
 
@@ -15,9 +34,13 @@ export async function sendSMS(to: string, message: string): Promise<boolean> {
       body: { to, message },
     });
     if (error) throw error;
+    // "success" only means Arkesel accepted the request — log the
+    // per-recipient submission id/status so delivery can be cross-checked
+    // against the Arkesel dashboard.
+    console.log("[alerts] sendSMS accepted:", data?.detail);
     return data?.success === true;
   } catch (err) {
-    console.error("[alerts] sendSMS failed:", err);
+    await logFunctionError("sendSMS failed", err);
     return false;
   }
 }
@@ -35,7 +58,7 @@ export async function sendEmail(
     if (error) throw error;
     return data?.success === true;
   } catch (err) {
-    console.error("[alerts] sendEmail failed:", err);
+    await logFunctionError("sendEmail failed", err);
     return false;
   }
 }
@@ -48,28 +71,21 @@ export async function makeCall(to: string, message: string): Promise<boolean> {
     if (error) throw error;
     return data?.success === true;
   } catch (err) {
-    console.error("[alerts] makeCall failed:", err);
+    await logFunctionError("makeCall failed", err);
     return false;
   }
 }
 
-// ─── Orchestrator ─────────────────────────────────────────────────────────────
+// ─── Message builder ────────────────────────────────────────────────────────
 
-export async function triggerAlert(event: Event, contact: Contact): Promise<void> {
-  try {
-  // Deduplicate — if an alert for this event was already fired, bail out.
-  const existingAlerts = useAlertStore.getState().alerts;
-  if (existingAlerts.some((a) => a.eventId === event.id)) {
-    console.log("[alerts] duplicate event, skipping:", event.id);
-    return;
-  }
-
+function buildAlertMessages(event: Event, contact: Contact) {
   const timestamp = new Date(event.timestamp).toLocaleString();
   const mapsLink = event.location
     ? `https://maps.google.com/?q=${event.location.lat},${event.location.lng}`
     : "Location unavailable";
-  const humanAddress =
-    event.location?.address ? formatAddress(event.location.address) : null;
+  const humanAddress = event.location?.address
+    ? formatAddress(event.location.address)
+    : null;
 
   // ── SMS ──────────────────────────────────────────────────────────────────
   const smsMessage =
@@ -97,16 +113,30 @@ export async function triggerAlert(event: Event, contact: Contact): Promise<void
       ? `Coordinates: ${event.location.lat}, ${event.location.lng}\n`
       : "") +
     `Map: ${mapsLink}\n` +
-    (event.location?.address?.name ? `Name: ${event.location.address.name}\n` : "") +
+    (event.location?.address?.name
+      ? `Name: ${event.location.address.name}\n`
+      : "") +
     (event.location?.address?.street
       ? `Street: ${[event.location.address.streetNumber, event.location.address.street].filter(Boolean).join(" ")}\n`
       : "") +
-    (event.location?.address?.district ? `District: ${event.location.address.district}\n` : "") +
-    (event.location?.address?.city ? `City: ${event.location.address.city}\n` : "") +
-    (event.location?.address?.subregion ? `Subregion: ${event.location.address.subregion}\n` : "") +
-    (event.location?.address?.region ? `Region: ${event.location.address.region}\n` : "") +
-    (event.location?.address?.postalCode ? `Postal Code: ${event.location.address.postalCode}\n` : "") +
-    (event.location?.address?.country ? `Country: ${event.location.address.country} (${event.location.address.isoCountryCode})\n` : "") +
+    (event.location?.address?.district
+      ? `District: ${event.location.address.district}\n`
+      : "") +
+    (event.location?.address?.city
+      ? `City: ${event.location.address.city}\n`
+      : "") +
+    (event.location?.address?.subregion
+      ? `Subregion: ${event.location.address.subregion}\n`
+      : "") +
+    (event.location?.address?.region
+      ? `Region: ${event.location.address.region}\n`
+      : "") +
+    (event.location?.address?.postalCode
+      ? `Postal Code: ${event.location.address.postalCode}\n`
+      : "") +
+    (event.location?.address?.country
+      ? `Country: ${event.location.address.country} (${event.location.address.isoCountryCode})\n`
+      : "") +
     `\nAI ANALYSIS\n` +
     `-----------\n` +
     `${event.aiSummary}\n` +
@@ -125,42 +155,143 @@ export async function triggerAlert(event: Event, contact: Contact): Promise<void
     `${event.aiSummary}. ` +
     `Please check on ${contact.name} immediately.`;
 
-  // ── Fire channels in parallel ─────────────────────────────────────────────
-  // A phone call is placed only when the event was triggered by a shake
-  // (shake alone or shake combined with a high AI score). An AI-only high
-  // score sends SMS and email but does not call — to avoid false-positive calls.
-  const isShakeEvent = event.source?.includes("shake") ?? false;
+  return { smsMessage, emailSubject, emailBody, callMessage };
+}
+
+// ─── Channel sender ─────────────────────────────────────────────────────────
+// A phone call is placed only for the highest-confidence triggers — a shake
+// event (alone or combined with a high AI score) or a manual SOS. An AI-only
+// high score sends SMS and email but does not call — to avoid false-positive
+// calls.
+
+async function sendAlertChannels(
+  event: Event,
+  contact: Contact,
+  isUrgent: boolean,
+): Promise<{ smsSent: boolean; emailSent: boolean; callMade: boolean }> {
+  const { smsMessage, emailSubject, emailBody, callMessage } =
+    buildAlertMessages(event, contact);
 
   const channelPromises: Promise<boolean>[] = [
     sendSMS(contact.phone, smsMessage),
     sendEmail(contact.email, emailSubject, emailBody, contact.name),
   ];
 
-  if (isShakeEvent) {
+  if (isUrgent) {
     channelPromises.push(makeCall(contact.phone, callMessage));
   }
 
-  const [smsSent, emailSent, callMade = false] = await Promise.all(channelPromises);
+  const [smsSent, emailSent, callMade = false] =
+    await Promise.all(channelPromises);
 
-  console.log(
-    `[alerts] event=${event.id} sms=${smsSent} email=${emailSent} call=${callMade}`,
-  );
+  return { smsSent, emailSent, callMade };
+}
 
-  // ── Persist to store + Supabase ───────────────────────────────────────────
-  const alert: Alert = {
-    id: crypto.randomUUID(),
-    eventId: event.id,
-    timestamp: Date.now(),
-    contactName: contact.name,
-    smsSent,
-    emailSent,
-    callMade,
-    aiSummary: event.aiSummary,
-    location: event.location,
-  };
+// A channel result counts as fully delivered only if every channel that
+// should have fired for this event actually succeeded.
+function isFullyDelivered(
+  result: { smsSent: boolean; emailSent: boolean; callMade: boolean },
+  isUrgent: boolean,
+): boolean {
+  return result.smsSent && result.emailSent && (!isUrgent || result.callMade);
+}
 
-  await useAlertStore.getState().addAlert(alert);
+// ─── Orchestrator ─────────────────────────────────────────────────────────────
+
+export async function triggerAlert(
+  event: Event,
+  contact: Contact,
+): Promise<void> {
+  try {
+    // Deduplicate — if an alert for this event was already fired, bail out.
+    const existingAlerts = useAlertStore.getState().alerts;
+    if (existingAlerts.some((a) => a.eventId === event.id)) {
+      console.log("[alerts] duplicate event, skipping:", event.id);
+      return;
+    }
+
+    const isUrgent =
+      event.source === "manual" || (event.source?.includes("shake") ?? false);
+
+    const online = await isOnline();
+    if (!online) {
+      console.warn(
+        "[alerts] device offline — queueing alert for retry:",
+        event.id,
+      );
+    }
+
+    const channelResult = online
+      ? await sendAlertChannels(event, contact, isUrgent)
+      : { smsSent: false, emailSent: false, callMade: false };
+
+    console.log(
+      `[alerts] event=${event.id} sms=${channelResult.smsSent} email=${channelResult.emailSent} call=${channelResult.callMade}`,
+    );
+
+    // ── Persist to store + Supabase ───────────────────────────────────────────
+    const alert: Alert = {
+      id: generateUUID(),
+      eventId: event.id,
+      timestamp: Date.now(),
+      contactName: contact.name,
+      ...channelResult,
+      aiSummary: event.aiSummary,
+      location: event.location,
+    };
+
+    useAlertStore.getState().addAlertLocal(alert);
+    const supabaseSynced = online
+      ? await useAlertStore.getState().syncAlertToSupabase(alert.id)
+      : false;
+
+    const channelsSent = isFullyDelivered(channelResult, isUrgent);
+
+    if (!channelsSent || !supabaseSynced) {
+      useOfflineQueueStore.getState().enqueue({
+        id: generateUUID(),
+        alertId: alert.id,
+        event,
+        contact,
+        isUrgent,
+        channelsSent,
+        supabaseSynced,
+        attempts: 0,
+        createdAt: Date.now(),
+      });
+    }
   } catch (err) {
     console.error("[alerts] triggerAlert failed:", err);
   }
+}
+
+// Retries whatever part of a queued alert didn't complete last time — the
+// channel sends, the Supabase sync, or both. Called by the offline queue
+// processor once connectivity returns.
+export async function retryQueuedAlert(
+  item: QueuedAlert,
+): Promise<{ channelsSent: boolean; supabaseSynced: boolean }> {
+  let channelsSent = item.channelsSent;
+  let supabaseSynced = item.supabaseSynced;
+
+  if (!channelsSent) {
+    const result = await sendAlertChannels(
+      item.event,
+      item.contact,
+      item.isUrgent,
+    );
+    channelsSent = isFullyDelivered(result, item.isUrgent);
+    useAlertStore.getState().updateAlert(item.alertId, result);
+    console.log(
+      `[alerts] retry event=${item.event.id} sms=${result.smsSent} email=${result.emailSent} call=${result.callMade}`,
+    );
+  }
+
+  if (!supabaseSynced) {
+    supabaseSynced = await useAlertStore
+      .getState()
+      .syncAlertToSupabase(item.alertId);
+  }
+
+  return { channelsSent, supabaseSynced };
 }

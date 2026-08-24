@@ -1,9 +1,9 @@
 // Supabase Edge Function -- send-email
 //
-// Sends a safety alert email via SendGrid API.
+// Sends a safety alert email via the Resend API.
 // Secrets required (set via `supabase secrets set`):
-//   SENDGRID_API_KEY
-//   SENDGRID_FROM_EMAIL  (verified sender address, e.g. alerts@yourdomain.com)
+//   RESEND_API_KEY
+//   ALERT_FROM_EMAIL  (verified sender address, e.g. alerts@yourdomain.com)
 //
 // Deploy: supabase functions deploy send-email
 
@@ -37,26 +37,23 @@ Deno.serve(async (req) => {
       );
     }
 
-    const apiKey = Deno.env.get("SENDGRID_API_KEY");
-    const fromEmail = Deno.env.get("SENDGRID_FROM_EMAIL") ?? "alerts@surveillanceai.app";
+    const apiKey = Deno.env.get("RESEND_API_KEY");
+    const fromEmail =
+      Deno.env.get("ALERT_FROM_EMAIL") ?? "alerts@surveillanceai.app";
 
     if (!apiKey) {
-      console.error("[send-email] Missing SENDGRID_API_KEY");
-      return json({ success: false, error: "SendGrid not configured" }, 500);
+      console.error("[send-email] Missing RESEND_API_KEY");
+      return json({ success: false, error: "Resend not configured" }, 500);
     }
 
     const payload = {
-      personalizations: [
-        {
-          to: [{ email: to, name: contactName ?? undefined }],
-          subject,
-        },
-      ],
-      from: { email: fromEmail, name: "Surveillance AI" },
-      content: [{ type: "text/plain", value: body }],
+      from: `Surveillance AI <${fromEmail}>`,
+      to: [to],
+      subject,
+      text: body,
     };
 
-    const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -65,11 +62,14 @@ Deno.serve(async (req) => {
       body: JSON.stringify(payload),
     });
 
-    // SendGrid returns 202 Accepted on success (no body)
-    if (response.status !== 202) {
-      const err = await response.text();
-      console.error("[send-email] SendGrid error:", err);
-      return json({ success: false, error: "SendGrid request failed" }, 502);
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.error("[send-email] Resend error:", result);
+      return json(
+        { success: false, error: "Resend request failed", detail: result },
+        502,
+      );
     }
 
     return json({ success: true });

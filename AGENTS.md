@@ -35,9 +35,9 @@ Core features include:
 - Ambient audio recording transcribed via Whisper API and analysed for threats
 - Accelerometer shake and impact detection via Expo Sensors
 - AI risk scoring (Low / Medium / High) on every monitoring cycle
-- Automated SMS alert to emergency contact via Twilio
+- Automated SMS alert to emergency contact via Arkesel
 - Automated email alert with full AI report via SendGrid
-- Automated phone call to emergency contact via Twilio Voice
+- Automated phone call to emergency contact via Arkesel's OTP voice endpoint (text-to-speech)
 - Push notifications for Medium risk events
 - Session event log with timestamp, risk level, AI summary, and photo
 - Wellness check-in system with missed-check-in auto-alert
@@ -71,7 +71,7 @@ Use the following stack:
   submission if any social login (like Google) is offered
 - OpenAI GPT-4o API (`gpt-4o`) for AI vision and risk analysis
 - OpenAI Whisper API for audio transcription
-- Twilio REST API for SMS and phone calls
+- Arkesel REST API for SMS and phone calls
 - SendGrid API for email alerts
 - Expo Camera for silent photo capture
 - Expo AV for audio recording
@@ -166,12 +166,14 @@ Follow these rules:
 
 When risk reaches High, three channels fire simultaneously:
 
-- SMS via Twilio REST API — short message with GPS coordinates,
+- SMS via Arkesel SMS API — short message with GPS coordinates,
   AI summary, and a Google Maps link
 - Email via SendGrid — full report with AI analysis breakdown,
   timestamp, GPS link, and photo if available
-- Phone call via Twilio Programmable Voice — automated call that
-  reads the alert aloud
+- Phone call via Arkesel's OTP voice endpoint — automated
+  text-to-speech call that reads the alert aloud (Arkesel has no
+  general-purpose voice API, so this reuses the OTP generate
+  endpoint with the alert text as the message)
 
 Additional rules:
 
@@ -214,7 +216,7 @@ Additional rules:
   automatically via a Supabase trigger on first sign-up
 - Use local AsyncStorage as the immediate read layer so the app
   feels instant -- sync to Supabase in the background
-- Edge Functions handle all AI calls, Twilio SMS/call, and SendGrid
+- Edge Functions handle all AI calls, Arkesel SMS/call, and SendGrid
   email so API keys never reach the client
 - Disable email confirmation during development for faster testing
   (set in Supabase dashboard: Authentication > Email > Confirm email: OFF)
@@ -372,7 +374,7 @@ Use this folder structure:
   supabase.ts
   openai.ts
   whisper.ts
-  twilio.ts
+  arkesel.ts
   sendgrid.ts
   location.ts
   sensors.ts
@@ -401,9 +403,8 @@ Use this folder structure:
 
 ```
 OPENAI_API_KEY=
-TWILIO_ACCOUNT_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_PHONE_NUMBER=
+ARKESEL_API_KEY=
+ARKESEL_SENDER_ID=
 SENDGRID_API_KEY=
 SUPABASE_URL=
 SUPABASE_ANON_KEY=

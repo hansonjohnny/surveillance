@@ -1,0 +1,55 @@
+flowchart TB
+    subgraph Device["Mobile Application (Expo / React Native / TypeScript)"]
+        UI["Screens: Auth, Onboarding, Home, Live Map, Event Log, Alerts, Settings"]
+        Store["Zustand State Stores (session, alerts, settings, onboarding)"]
+        Mon["Monitoring Orchestrator (monitoring.ts)"]
+        Sensors["Device Sensors: GPS, Camera, Microphone, Accelerometer"]
+        Local["AsyncStorage / Secure Store (local cache and secrets)"]
+        UI --> Store
+        Store --> Mon
+        Mon --> Sensors
+        Sensors --> Mon
+        Store --> Local
+    end
+
+    subgraph Backend["Supabase Backend"]
+        Auth["Authentication (email / password)"]
+        DB[("PostgreSQL Database\nusers, sessions, events, alerts,\ncontacts, settings, ai_usage\n(Row Level Security)")]
+        EF1["Edge Function: analyse-image"]
+        EF2["Edge Function: analyse-audio"]
+        EF3["Edge Function: send-sms"]
+        EF4["Edge Function: send-email"]
+        EF5["Edge Function: make-call"]
+        EF6["Edge Function: admin-users / upgrade-plan"]
+    end
+
+    subgraph External["Third-Party Services"]
+        OpenAI["OpenAI GPT-4o and Whisper"]
+        Twilio["Twilio SMS and Voice"]
+        SendGrid["SendGrid Email"]
+    end
+
+    Contact(["Emergency Contact"])
+    Admin(["Administrator"])
+
+    UI -- "sign up / sign in" --> Auth
+    Store -- "sync sessions, events, alerts, settings" --> DB
+    Mon -- "photo + GPS" --> EF1
+    Mon -- "audio clip" --> EF2
+    Mon -- "risk = High" --> EF3
+    Mon -- "risk = High" --> EF4
+    Mon -- "shake + High" --> EF5
+    Admin -- "manage plans and quotas" --> EF6
+    EF6 --> DB
+
+    EF1 --> OpenAI
+    EF2 --> OpenAI
+    EF3 --> Twilio
+    EF5 --> Twilio
+    EF4 --> SendGrid
+    OpenAI -- "risk level, summary" --> EF1
+    OpenAI -- "transcript, risk level" --> EF2
+    EF1 --> Mon
+    EF2 --> Mon
+    Twilio --> Contact
+    SendGrid --> Contact

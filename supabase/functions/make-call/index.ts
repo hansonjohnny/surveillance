@@ -1,11 +1,14 @@
 // Supabase Edge Function -- make-call
 //
-// Places an automated voice call via Twilio Programmable Voice.
-// The call reads the alert message aloud using TwiML <Say>.
+// Places an automated voice call via Arkesel's OTP "voice" medium, which
+// reads an arbitrary text message aloud using text-to-speech. Arkesel has no
+// general-purpose voice API for arbitrary text, so this reuses the OTP
+// generate endpoint -- the generated code is appended to (and ignored in) the
+// message, since the endpoint requires a %otp_code% slot.
 // Secrets required (set via `supabase secrets set`):
-//   TWILIO_ACCOUNT_SID
-//   TWILIO_AUTH_TOKEN
-//   TWILIO_PHONE_NUMBER
+//   ARKESEL_API_KEY (must be the main SMS API key -- OTP does not work with
+//   Multiple API Keys)
+//   ARKESEL_SENDER_ID
 //
 // Deploy: supabase functions deploy make-call
 
@@ -24,22 +27,9 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// Builds a TwiML response that reads the message aloud twice, then hangs up.
-function buildTwiml(message: string): string {
-  // Escape any XML special characters in the message to keep TwiML valid.
-  const safe = message
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice" language="en-US">${safe}</Say>
-  <Pause length="1"/>
-  <Say voice="alice" language="en-US">${safe}</Say>
-</Response>`;
+// Arkesel expects recipient numbers in international format without a leading '+'.
+function normalizePhone(phone: string): string {
+  return phone.replace(/^\+/, "").replace(/[^0-9]/g, "");
 }
 
 Deno.serve(async (req) => {
@@ -51,40 +41,54 @@ Deno.serve(async (req) => {
     const { to, message } = await req.json();
 
     if (!to || !message) {
-      return json({ success: false, error: "to and message are required" }, 400);
+      return json(
+        { success: false, error: "to and message are required" },
+        400,
+      );
     }
 
-    const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
-    const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
-    const from = Deno.env.get("TWILIO_PHONE_NUMBER");
+    const apiKey = Deno.env.get("ARKESEL_API_KEY");
+    const senderId = Deno.env.get("ARKESEL_SENDER_ID");
 
-    if (!accountSid || !authToken || !from) {
-      console.error("[make-call] Missing Twilio secrets");
-      return json({ success: false, error: "Twilio not configured" }, 500);
+    if (!apiKey || !senderId) {
+      console.error("[make-call] Missing Arkesel secrets");
+      return json({ success: false, error: "Arkesel not configured" }, 500);
     }
 
-    const credentials = btoa(`${accountSid}:${authToken}`);
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls.json`;
+    // Arkesel's OTP/voice message must be 10-145 characters total, including
+    // the required %otp_code% slot we append below.
+    const SUFFIX = " Reference code %otp_code%.";
+    const maxBodyLength = 145 - SUFFIX.length;
+    const trimmedMessage =
+      message.length > maxBodyLength
+        ? message.slice(0, maxBodyLength)
+        : message;
 
-    const body = new URLSearchParams({
-      To: to,
-      From: from,
-      Twiml: buildTwiml(message),
-    });
-
-    const response = await fetch(url, {
+    const response = await fetch("https://sms.arkesel.com/api/otp/generate", {
       method: "POST",
       headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+        "api-key": apiKey,
+        "Content-Type": "application/json",
       },
-      body: body.toString(),
+      body: JSON.stringify({
+        expiry: 5,
+        length: 6,
+        medium: "voice",
+        message: `${trimmedMessage}${SUFFIX}`,
+        number: normalizePhone(to),
+        sender_id: senderId,
+        type: "numeric",
+      }),
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      console.error("[make-call] Twilio error:", err);
-      return json({ success: false, error: "Twilio request failed" }, 502);
+    const result = await response.json();
+
+    if (!response.ok || result?.code !== "1000") {
+      console.error("[make-call] Arkesel error:", result);
+      return json(
+        { success: false, error: "Arkesel request failed", detail: result },
+        502,
+      );
     }
 
     return json({ success: true });

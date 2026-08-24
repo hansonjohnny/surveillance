@@ -1,8 +1,8 @@
-import type { Location } from '@/types'
-import { Crosshair, Minus, Plus, Sun, Moon } from 'lucide-react-native'
-import { useEffect, useRef, useState } from 'react'
-import { Linking, Text, TouchableOpacity, View } from 'react-native'
-import WebView, { type WebViewMessageEvent } from 'react-native-webview'
+import type { Location } from "@/types";
+import { Crosshair, Minus, Moon, Plus, Sun } from "lucide-react-native";
+import { useEffect, useRef, useState } from "react";
+import { Linking, Text, TouchableOpacity, View } from "react-native";
+import WebView, { type WebViewMessageEvent } from "react-native-webview";
 
 function buildHtml(lat: number, lng: number) {
   return `<!DOCTYPE html>
@@ -29,6 +29,7 @@ html, body { width:100%; height:100%; overflow:hidden; background:#0d0d14; }
 <body>
 <div id="map">
   <div id="tiles"></div>
+  <canvas id="pathCanvas" style="position:absolute;top:0;left:0;z-index:1;pointer-events:none;"></canvas>
   <div id="marker">
     <div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">
       <div class="ring"></div>
@@ -38,7 +39,7 @@ html, body { width:100%; height:100%; overflow:hidden; background:#0d0d14; }
 </div>
 <script>
 var TILE = 256;
-var zoom = 13;
+var zoom = 17;
 var centerLat = ${lat};
 var centerLng = ${lng};
 var actualLat = ${lat};
@@ -66,6 +67,57 @@ function applyTheme() {
     ? 'sepia(1) hue-rotate(165deg) saturate(4) brightness(1.3)'
     : 'none';
   document.body.style.background = isDark ? '#0d0d14' : '#e8e4de';
+}
+
+// ── Path trail (breadcrumb of recorded GPS points, colored by risk level) ────
+var pathPoints = [];
+var pathCanvas = document.getElementById('pathCanvas');
+var pathCtx = pathCanvas.getContext('2d');
+function resizeCanvas() {
+  pathCanvas.width = window.innerWidth;
+  pathCanvas.height = window.innerHeight;
+}
+function riskColor(level) {
+  if (level === 'high') return '#FF3D3D';
+  if (level === 'medium') return '#FFD740';
+  if (level === 'low') return '#00E676';
+  return '#00E5FF';
+}
+function renderPath() {
+  if (!pathCtx || pathCanvas.width === 0) return;
+  pathCtx.clearRect(0, 0, pathCanvas.width, pathCanvas.height);
+  if (pathPoints.length === 0) return;
+  var cpx = lng2x(centerLng, zoom);
+  var cpy = lat2y(centerLat, zoom);
+  var vpLeft = cpx - pathCanvas.width / 2;
+  var vpTop = cpy - pathCanvas.height / 2;
+  var coords = pathPoints.map(function(p) {
+    return {
+      x: lng2x(p.lng, zoom) - vpLeft,
+      y: lat2y(p.lat, zoom) - vpTop,
+      risk: p.riskLevel,
+    };
+  });
+  pathCtx.lineWidth = 3;
+  pathCtx.lineJoin = 'round';
+  pathCtx.lineCap = 'round';
+  pathCtx.globalAlpha = 0.85;
+  for (var i = 1; i < coords.length; i++) {
+    pathCtx.strokeStyle = riskColor(coords[i - 1].risk);
+    pathCtx.beginPath();
+    pathCtx.moveTo(coords[i - 1].x, coords[i - 1].y);
+    pathCtx.lineTo(coords[i].x, coords[i].y);
+    pathCtx.stroke();
+  }
+  // Dot at each breadcrumb — keeps the trail visible even before enough
+  // ground distance has been covered to see a line.
+  pathCtx.globalAlpha = 0.9;
+  coords.forEach(function(c) {
+    pathCtx.fillStyle = riskColor(c.risk);
+    pathCtx.beginPath();
+    pathCtx.arc(c.x, c.y, 2.5, 0, Math.PI * 2);
+    pathCtx.fill();
+  });
 }
 
 function render() {
@@ -98,6 +150,7 @@ function render() {
   }
   marker.style.left = Math.round(lng2x(actualLng, zoom) - vpLeft) + 'px';
   marker.style.top  = Math.round(lat2y(actualLat, zoom) - vpTop)  + 'px';
+  renderPath();
 }
 
 // Touch pan
@@ -154,58 +207,89 @@ window.updateLocation = function(la, ln) {
   if (following) { centerLat = la; centerLng = ln; }
   render();
 };
+window.setPath = function(points) {
+  pathPoints = points;
+  render();
+};
 
-setTimeout(function() { render(); }, 300);
-window.addEventListener('resize', function() { render(); });
+resizeCanvas();
+setTimeout(function() { resizeCanvas(); render(); }, 300);
+window.addEventListener('resize', function() { resizeCanvas(); render(); });
 </script>
 </body>
-</html>`
+</html>`;
 }
 
-type Props = { location: Location | null }
+type PathPoint = {
+  lat: number;
+  lng: number;
+  riskLevel?: "low" | "medium" | "high" | null;
+};
+type Props = { location: Location | null; path?: PathPoint[] };
 
-export function LiveMap({ location }: Props) {
-  const webViewRef = useRef<WebView>(null)
+export function LiveMap({ location, path = [] }: Props) {
+  const webViewRef = useRef<WebView>(null);
   // Capture the first real GPS fix once — prevents WebView source from
   // being rebuilt on subsequent location updates, which would reload the map.
-  const initialRef = useRef<{ lat: number; lng: number } | null>(null)
+  const initialRef = useRef<{ lat: number; lng: number } | null>(null);
   if (location && !initialRef.current) {
-    initialRef.current = { lat: location.lat, lng: location.lng }
+    initialRef.current = { lat: location.lat, lng: location.lng };
   }
-  const [isDark, setIsDark] = useState(true)
+  const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
-    if (!location || !webViewRef.current) return
+    if (!location || !webViewRef.current) return;
     webViewRef.current.injectJavaScript(
-      `window.updateLocation(${location.lat}, ${location.lng}); true;`
-    )
-  }, [location])
+      `window.updateLocation(${location.lat}, ${location.lng}); true;`,
+    );
+  }, [location]);
+
+  useEffect(() => {
+    if (!webViewRef.current || path.length === 0) return;
+    const serialized = JSON.stringify(
+      path.map((p) => ({
+        lat: p.lat,
+        lng: p.lng,
+        riskLevel: p.riskLevel ?? null,
+      })),
+    );
+    webViewRef.current.injectJavaScript(`window.setPath(${serialized}); true;`);
+  }, [path]);
 
   // Show a placeholder until the first GPS fix arrives.
   if (!initialRef.current) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0d0d14' }}>
-        <Text style={{ color: '#555568', fontSize: 14 }}>Waiting for GPS...</Text>
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "#0d0d14",
+        }}
+      >
+        <Text style={{ color: "#555568", fontSize: 14 }}>
+          Waiting for GPS...
+        </Text>
       </View>
-    )
+    );
   }
 
   function inject(fn: string) {
-    webViewRef.current?.injectJavaScript(`${fn}(); true;`)
+    webViewRef.current?.injectJavaScript(`${fn}(); true;`);
   }
 
   function handleMessage(e: WebViewMessageEvent) {
     try {
-      const msg = JSON.parse(e.nativeEvent.data)
-      if (msg.type === 'openMaps') {
-        Linking.openURL(`https://maps.google.com/?q=${msg.lat},${msg.lng}`)
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg.type === "openMaps") {
+        Linking.openURL(`https://maps.google.com/?q=${msg.lat},${msg.lng}`);
       }
     } catch {}
   }
 
   function handleThemeToggle() {
-    setIsDark(prev => !prev)
-    inject('window.toggleTheme')
+    setIsDark((prev) => !prev);
+    inject("window.toggleTheme");
   }
 
   return (
@@ -213,11 +297,14 @@ export function LiveMap({ location }: Props) {
       <WebView
         ref={webViewRef}
         className="flex-1"
-        style={{ backgroundColor: '#0d0d14' }}
-        source={{ html: buildHtml(initialRef.current.lat, initialRef.current.lng), baseUrl: 'https://carto.com' }}
+        style={{ backgroundColor: "#0d0d14" }}
+        source={{
+          html: buildHtml(initialRef.current.lat, initialRef.current.lng),
+          baseUrl: "https://carto.com",
+        }}
         scrollEnabled={false}
         bounces={false}
-        originWhitelist={['*']}
+        originWhitelist={["*"]}
         javaScriptEnabled
         domStorageEnabled
         mixedContentMode="always"
@@ -230,22 +317,23 @@ export function LiveMap({ location }: Props) {
         <TouchableOpacity
           onPress={handleThemeToggle}
           className="w-11 h-11 rounded-xl items-center justify-center border border-white/20"
-          style={{ backgroundColor: 'rgba(10,10,15,0.88)' }}
+          style={{ backgroundColor: "rgba(10,10,15,0.88)" }}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Toggle theme"
         >
-          {isDark
-            ? <Sun size={18} color="#00E5FF" strokeWidth={1.5} />
-            : <Moon size={18} color="#f0f0f5" strokeWidth={1.5} />
-          }
+          {isDark ? (
+            <Sun size={18} color="#00E5FF" strokeWidth={1.5} />
+          ) : (
+            <Moon size={18} color="#f0f0f5" strokeWidth={1.5} />
+          )}
         </TouchableOpacity>
 
         {/* Zoom in */}
         <TouchableOpacity
-          onPress={() => inject('window.zoomIn')}
+          onPress={() => inject("window.zoomIn")}
           className="w-11 h-11 rounded-xl items-center justify-center border border-white/20"
-          style={{ backgroundColor: 'rgba(10,10,15,0.88)' }}
+          style={{ backgroundColor: "rgba(10,10,15,0.88)" }}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Zoom in"
@@ -255,9 +343,9 @@ export function LiveMap({ location }: Props) {
 
         {/* Zoom out */}
         <TouchableOpacity
-          onPress={() => inject('window.zoomOut')}
+          onPress={() => inject("window.zoomOut")}
           className="w-11 h-11 rounded-xl items-center justify-center border border-white/20"
-          style={{ backgroundColor: 'rgba(10,10,15,0.88)' }}
+          style={{ backgroundColor: "rgba(10,10,15,0.88)" }}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Zoom out"
@@ -267,9 +355,9 @@ export function LiveMap({ location }: Props) {
 
         {/* Recenter */}
         <TouchableOpacity
-          onPress={() => inject('window.recenter')}
+          onPress={() => inject("window.recenter")}
           className="w-11 h-11 rounded-xl items-center justify-center border border-white/20"
-          style={{ backgroundColor: 'rgba(10,10,15,0.88)' }}
+          style={{ backgroundColor: "rgba(10,10,15,0.88)" }}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="Recenter map"
@@ -278,5 +366,5 @@ export function LiveMap({ location }: Props) {
         </TouchableOpacity>
       </View>
     </View>
-  )
+  );
 }

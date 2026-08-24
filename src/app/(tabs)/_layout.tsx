@@ -1,7 +1,14 @@
-import { Tabs } from 'expo-router';
-import { BellRing, Home, Map, ScrollText, Settings2 } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../../theme/colors';
+import { Tabs } from "expo-router";
+import {
+  BellRing,
+  History,
+  Home,
+  Map,
+  ScrollText,
+  Settings2,
+} from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { colors } from "../../theme/colors";
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -21,7 +28,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.text.tertiary,
         tabBarLabelStyle: {
-          fontFamily: 'JetBrainsMono_400Regular',
+          fontFamily: "JetBrainsMono_400Regular",
           fontSize: 10,
           letterSpacing: 0.5,
           marginTop: 2,
@@ -31,7 +38,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: 'HOME',
+          title: "HOME",
           tabBarIcon: ({ color }) => (
             <Home size={22} color={color} strokeWidth={1.5} />
           ),
@@ -40,7 +47,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="log"
         options={{
-          title: 'EVENT LOG',
+          title: "EVENT LOG",
           tabBarIcon: ({ color }) => (
             <ScrollText size={22} color={color} strokeWidth={1.5} />
           ),
@@ -49,16 +56,25 @@ export default function TabLayout() {
       <Tabs.Screen
         name="live"
         options={{
-          title: 'LIVE MAP',
+          title: "LIVE MAP",
           tabBarIcon: ({ color }) => (
             <Map size={22} color={color} strokeWidth={1.5} />
           ),
         }}
       />
       <Tabs.Screen
+        name="history"
+        options={{
+          title: "HISTORY",
+          tabBarIcon: ({ color }) => (
+            <History size={22} color={color} strokeWidth={1.5} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="alerts"
         options={{
-          title: 'ALERTS',
+          title: "ALERTS",
           tabBarIcon: ({ color }) => (
             <BellRing size={22} color={color} strokeWidth={1.5} />
           ),
@@ -67,7 +83,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'SETTINGS',
+          title: "SETTINGS",
           tabBarIcon: ({ color }) => (
             <Settings2 size={22} color={color} strokeWidth={1.5} />
           ),

@@ -3,5 +3,11 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "/^cmd /c \"where supabase\" 2>&1; cmd /c \"supabase --version\" 2>&1$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
   }
 }

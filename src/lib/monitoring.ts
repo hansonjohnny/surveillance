@@ -5,16 +5,22 @@
 // GPT-4o or Whisper. Both AI calls patch the existing event when they resolve.
 
 import { useAlertStore } from "../store/useAlertStore";
+import { useLiveShareStore } from "../store/useLiveShareStore";
 import { useSessionStore } from "../store/useSessionStore";
 import { useSettingsStore } from "../store/useSettingsStore";
 import type { Contact, Event, RiskLevel } from "../types";
 import { triggerAlert } from "./alerts";
+import {
+  analyseAudioTranscript,
+  recordAudioClip,
+  transcribeAudio,
+} from "./audio";
 import { photoToBase64, takeSnapshot } from "./camera";
+import { generateUUID } from "./id";
 import { getCurrentLocation, reverseGeocode } from "./location";
+import { pushLiveLocationUpdate } from "./liveShare";
 import { sendLocalNotification } from "./notifications";
-import { recordAudioClip, transcribeAudio, analyseAudioTranscript } from "./audio";
 import { analyseImage } from "./vision";
-import { isCapReached } from "./plans";
 
 function combineRisks(a: RiskLevel, b: RiskLevel | null): RiskLevel {
   if (!b) return a;
@@ -35,12 +41,17 @@ export async function runMonitoringCycle(): Promise<void> {
     if (!isActive || !sessionId) return;
 
     const { plan } = useSettingsStore.getState();
-    const audioEnabled = plan === 'pro' || plan === 'guardian';
-    console.log(`[monitoring] cycle start — plan: ${plan}, audioEnabled: ${audioEnabled}`);
+    // const audioEnabled = plan === 'pro' || plan === 'guardian';
+    const audioEnabled = true; // TEMP: audio enabled for all plans while testing
+    console.log(
+      `[monitoring] cycle start — plan: ${plan}, audioEnabled: ${audioEnabled}`,
+    );
 
     // Start audio recording immediately — runs concurrently with everything else.
     // Free plan skips audio entirely; only camera + GPS run.
-    const audioPromise = audioEnabled ? recordAudioClip(8000) : Promise.resolve(null);
+    const audioPromise = audioEnabled
+      ? recordAudioClip(8000)
+      : Promise.resolve(null);
 
     // Snapshot and GPS in parallel.
     const [photoUri, location] = await Promise.all([
@@ -50,10 +61,20 @@ export async function runMonitoringCycle(): Promise<void> {
 
     if (location) updateLocation(location);
 
+    // Only pushed to Supabase while an active, matching share link exists —
+    // most sessions never generate one, so this stays a no-op for them.
+    const activeLink = useLiveShareStore.getState().activeLink;
+    if (location && activeLink && activeLink.sessionId === sessionId) {
+      pushLiveLocationUpdate(sessionId, location.lat, location.lng).catch(
+        (err) =>
+          console.error("[monitoring] pushLiveLocationUpdate failed:", err),
+      );
+    }
+
     // Log the event immediately so it appears in the log without delay.
     // aiSummary and audio fields are placeholders — patched below as AI returns.
     const event: Event = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: generateUUID(),
       sessionId,
       timestamp: Date.now(),
       riskLevel: "low",
@@ -164,13 +185,17 @@ export async function runMonitoringCycle(): Promise<void> {
     const imageRisk: RiskLevel = imageResult?.riskLevel ?? "low";
 
     if (!audioUri) {
-      useAlertStore.getState().updateEvent(event.id, { transcript: null, audioUri: null });
+      useAlertStore
+        .getState()
+        .updateEvent(event.id, { transcript: null, audioUri: null });
     } else {
       useAlertStore.getState().updateEvent(event.id, { audioUri });
       transcribeAudio(audioUri)
         .then(async (transcript) => {
           if (!transcript) {
-            useAlertStore.getState().updateEvent(event.id, { transcript: null });
+            useAlertStore
+              .getState()
+              .updateEvent(event.id, { transcript: null });
             return;
           }
           useAlertStore.getState().updateEvent(event.id, { transcript });

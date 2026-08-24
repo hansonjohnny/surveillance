@@ -1,0 +1,34 @@
+sequenceDiagram
+    actor U as User's Device
+    participant Sen as Sensors (GPS, Camera, Mic, Accelerometer)
+    participant Mon as Monitoring Orchestrator
+    participant EF as Supabase Edge Functions
+    participant AI as OpenAI (GPT-4o / Whisper)
+    participant Alert as Twilio / SendGrid
+    participant EC as Emergency Contact
+
+    U->>Mon: Start Surveillance Session
+    loop Every 20-30 seconds
+        Mon->>Sen: Capture GPS + Camera snapshot (parallel)
+        Sen-->>Mon: Location + Photo
+        Mon->>Mon: Log placeholder event ("Analysing...")
+        Mon->>Sen: Record ambient audio (async)
+        Mon->>EF: analyse-image(photo, location)
+        EF->>AI: GPT-4o Vision request
+        AI-->>EF: risk level, summary
+        EF-->>Mon: image risk result
+        Sen-->>Mon: audio clip
+        Mon->>EF: analyse-audio(clip)
+        EF->>AI: Whisper transcription + GPT-4o analysis
+        AI-->>EF: transcript, risk level
+        EF-->>Mon: audio risk result
+        Mon->>Mon: combineRisks(image, audio)
+        alt Risk = Medium
+            Mon->>U: Local push notification
+        else Risk = High
+            Mon->>EF: send-sms / send-email / make-call
+            EF->>Alert: dispatch SMS, email, voice call
+            Alert-->>EC: Alert delivered
+        end
+    end
+    U->>Mon: Stop Surveillance Session

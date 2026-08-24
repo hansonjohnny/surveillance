@@ -1,10 +1,9 @@
 // Supabase Edge Function -- send-sms
 //
-// Sends an SMS via Twilio REST API.
+// Sends an SMS via the Arkesel SMS V2 API.
 // Secrets required (set via `supabase secrets set`):
-//   TWILIO_ACCOUNT_SID
-//   TWILIO_AUTH_TOKEN
-//   TWILIO_PHONE_NUMBER
+//   ARKESEL_API_KEY
+//   ARKESEL_SENDER_ID
 //
 // Deploy: supabase functions deploy send-sms
 
@@ -23,6 +22,11 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Arkesel expects recipient numbers in international format without a leading '+'.
+function normalizePhone(phone: string): string {
+  return phone.replace(/^\+/, "").replace(/[^0-9]/g, "");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS });
@@ -32,39 +36,47 @@ Deno.serve(async (req) => {
     const { to, message } = await req.json();
 
     if (!to || !message) {
-      return json({ success: false, error: "to and message are required" }, 400);
+      return json(
+        { success: false, error: "to and message are required" },
+        400,
+      );
     }
 
-    const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
-    const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
-    const from = Deno.env.get("TWILIO_PHONE_NUMBER");
+    const apiKey = Deno.env.get("ARKESEL_API_KEY");
+    const sender = Deno.env.get("ARKESEL_SENDER_ID");
 
-    if (!accountSid || !authToken || !from) {
-      console.error("[send-sms] Missing Twilio secrets");
-      return json({ success: false, error: "Twilio not configured" }, 500);
+    if (!apiKey || !sender) {
+      console.error("[send-sms] Missing Arkesel secrets");
+      return json({ success: false, error: "Arkesel not configured" }, 500);
     }
 
-    const credentials = btoa(`${accountSid}:${authToken}`);
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
-
-    const body = new URLSearchParams({ To: to, From: from, Body: message });
-
-    const response = await fetch(url, {
+    const response = await fetch("https://sms.arkesel.com/api/v2/sms/send", {
       method: "POST",
       headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+        "api-key": apiKey,
+        "Content-Type": "application/json",
       },
-      body: body.toString(),
+      body: JSON.stringify({
+        sender,
+        message,
+        recipients: [normalizePhone(to)],
+      }),
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      console.error("[send-sms] Twilio error:", err);
-      return json({ success: false, error: "Twilio request failed" }, 502);
+    const result = await response.json();
+
+    if (!response.ok || result?.status !== "success") {
+      console.error("[send-sms] Arkesel error:", result);
+      return json(
+        { success: false, error: "Arkesel request failed", detail: result },
+        502,
+      );
     }
 
-    return json({ success: true });
+    // result.data holds per-recipient submission info (id/status) — "success"
+    // here only means Arkesel accepted the request, not that it was delivered.
+    console.log("[send-sms] Arkesel accepted:", result?.data);
+    return json({ success: true, detail: result?.data });
   } catch (err) {
     console.error("[send-sms] unexpected error:", err);
     return json({ success: false, error: "Internal error" }, 500);

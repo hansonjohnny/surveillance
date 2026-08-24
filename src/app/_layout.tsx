@@ -41,23 +41,27 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import * as SecureStore from "expo-secure-store";
 import { Stack, useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
 import "../../global.css";
+import { startOfflineQueueWatcher } from "../lib/offlineQueue";
 import { setupNotificationHandler } from "../lib/notifications";
+import { supabase } from "../lib/supabase";
 import {
   confirmSafe,
   registerWellnessCategory,
   WELLNESS_ACTION_SAFE,
   WELLNESS_CATEGORY,
 } from "../lib/wellness";
-import { supabase } from "../lib/supabase";
 import { useAlertStore } from "../store/useAlertStore";
 import { useOnboardingStore } from "../store/useOnboardingStore";
 import { useSessionStore } from "../store/useSessionStore";
-import { ONBOARDING_SECURE_KEY, useSettingsStore } from "../store/useSettingsStore";
+import {
+  ONBOARDING_SECURE_KEY,
+  useSettingsStore,
+} from "../store/useSettingsStore";
 // Side-effect import — registers WELLNESS_CHECK_TASK with TaskManager at module
 // load time so the background runtime can find the task definition.
 import "../tasks/wellnessTask";
@@ -161,7 +165,10 @@ export default function RootLayout() {
         if (logClearScheduledAt) {
           if (Date.now() >= new Date(logClearScheduledAt).getTime()) {
             useAlertStore.getState().clearEvents();
-            updateSettings({ logClearScheduledAt: null, lastAutoCleared: Date.now() });
+            updateSettings({
+              logClearScheduledAt: null,
+              lastAutoCleared: Date.now(),
+            });
           }
         } else {
           const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
@@ -185,15 +192,15 @@ export default function RootLayout() {
 
         // Reset to safe defaults before the fetch so a previous user's tier
         // is never visible while the request is in flight or if it fails.
-        useSettingsStore.getState().setPlan('free');
+        useSettingsStore.getState().setPlan("free");
         useSettingsStore.getState().setTodayUsage(0);
 
         // Sync plan from DB to local store so the monitoring cycle uses the
         // correct tier even after a reinstall or AsyncStorage wipe.
         supabase
-          .from('users')
-          .select('plan')
-          .eq('id', s.user.id)
+          .from("users")
+          .select("plan")
+          .eq("id", s.user.id)
           .single()
           .then(({ data }) => {
             if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
@@ -210,7 +217,10 @@ export default function RootLayout() {
       if (s?.user) {
         // Always hydrate from Supabase on cold start so settings, contact, and
         // wellness time are restored even if AsyncStorage was wiped after reinstall.
-        useOnboardingStore.getState().hydrateFromSupabase(s.user.id).catch(console.warn);
+        useOnboardingStore
+          .getState()
+          .hydrateFromSupabase(s.user.id)
+          .catch(console.warn);
 
         if (!useSettingsStore.getState().onboardingComplete) {
           useSettingsStore.getState().markOnboardingComplete();
@@ -219,7 +229,7 @@ export default function RootLayout() {
         // No session — fall back to Secure Store (handles iOS reinstall and
         // the gap between session expiry and next sign-in).
         const stored = await SecureStore.getItemAsync(ONBOARDING_SECURE_KEY);
-        if (stored === 'true') {
+        if (stored === "true") {
           useSettingsStore.getState().markOnboardingComplete();
         }
       }
@@ -265,19 +275,22 @@ export default function RootLayout() {
         // On explicit sign-in, restore settings and contact from Supabase.
         // This covers the reinstall → expired session → manual sign-in path
         // where init() couldn't hydrate because there was no active session.
-        if (event === 'SIGNED_IN') {
-          useOnboardingStore.getState().hydrateFromSupabase(newSession.user.id).catch(console.warn);
+        if (event === "SIGNED_IN") {
+          useOnboardingStore
+            .getState()
+            .hydrateFromSupabase(newSession.user.id)
+            .catch(console.warn);
 
           // Reset to safe defaults before the fetch — see the same comment in init().
-          useSettingsStore.getState().setPlan('free');
+          useSettingsStore.getState().setPlan("free");
           useSettingsStore.getState().setTodayUsage(0);
 
           // Re-sync plan on every sign-in so the local store always
           // matches what the admin assigned in the database.
           supabase
-            .from('users')
-            .select('plan')
-            .eq('id', newSession.user.id)
+            .from("users")
+            .select("plan")
+            .eq("id", newSession.user.id)
             .single()
             .then(({ data }) => {
               if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
@@ -313,20 +326,29 @@ export default function RootLayout() {
   useEffect(() => {
     // Fires when the user interacts with any notification. We only act on
     // the "I'm Safe" action from wellness check-in notifications.
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const category = response.notification.request.content.categoryIdentifier;
-      if (
-        category === WELLNESS_CATEGORY &&
-        response.actionIdentifier === WELLNESS_ACTION_SAFE
-      ) {
-        confirmSafe().catch(console.warn);
-      }
-    });
+    const sub = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const category =
+          response.notification.request.content.categoryIdentifier;
+        if (
+          category === WELLNESS_CATEGORY &&
+          response.actionIdentifier === WELLNESS_ACTION_SAFE
+        ) {
+          confirmSafe().catch(console.warn);
+        }
+      },
+    );
 
     return () => sub.remove();
   }, []);
 
-  // ── 5. Routing effect ─────────────────────────────────────────────────────
+  // ── 5. Offline alert queue ────────────────────────────────────────────────
+
+  useEffect(() => {
+    return startOfflineQueueWatcher();
+  }, []);
+
+  // ── 6. Routing effect ─────────────────────────────────────────────────────
 
   useEffect(() => {
     // Wait for fonts (prevents flash of unstyled text) and session check.

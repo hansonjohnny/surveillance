@@ -1,0 +1,7 @@
+# share-location is opened by a plain browser navigation (someone tapping
+# a link in a text message) which can't attach an Authorization header, so
+# it can't go through Supabase's default JWT check. Its own security check
+# (token validity/expiry/revocation against share_links) happens inside the
+# function itself. Every other function keeps the default verify_jwt=true.
+[functions.share-location]
+verify_jwt = false

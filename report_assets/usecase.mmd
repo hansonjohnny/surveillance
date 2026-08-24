@@ -1,0 +1,25 @@
+flowchart LR
+    User(["Registered User"])
+    Admin(["Administrator"])
+
+    UC1(["Register and Sign In"])
+    UC2(["Complete Onboarding and\nSet Emergency Contact"])
+    UC3(["Start / Stop\nSurveillance Session"])
+    UC4(["Trigger Monitoring Cycle\n(GPS, Camera, Audio, Accelerometer)"])
+    UC5(["View Live Map and\nEvent Log"])
+    UC6(["Receive Medium-Risk\nPush Notification"])
+    UC7(["Receive High-Risk\nSMS, Email and Call Alert"])
+    UC8(["Configure Monitoring Interval,\nShake Sensitivity and Stealth Mode"])
+    UC9(["Perform Wellness Check-In"])
+    UC10(["Manage User Plans\nand Usage Quotas"])
+
+    User --> UC1
+    User --> UC2
+    User --> UC3
+    UC3 --> UC4
+    User --> UC5
+    UC4 -.-> UC6
+    UC4 -.-> UC7
+    User --> UC8
+    User --> UC9
+    Admin --> UC10

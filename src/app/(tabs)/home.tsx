@@ -14,13 +14,20 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { DegradedModeBanner } from "../../components/ui/DegradedModeBanner";
-import { isCapReached } from "../../lib/plans";
 import { ShieldPulse } from "../../components/ui/ShieldPulse";
 import { SilentCamera } from "../../components/ui/SilentCamera";
 import { StealthOverlay } from "../../components/ui/StealthOverlay";
+import { triggerAlert } from "../../lib/alerts";
+import { generateUUID } from "../../lib/id";
+import { getCurrentLocation } from "../../lib/location";
 import { runMonitoringCycle } from "../../lib/monitoring";
+import { isCapReached } from "../../lib/plans";
+import { buildRiskTaggedPath, countRisks } from "../../lib/riskPath";
+import { useAlertStore } from "../../store/useAlertStore";
+import { useSessionHistoryStore } from "../../store/useSessionHistoryStore";
 import { useSessionStore } from "../../store/useSessionStore";
 import { useSettingsStore } from "../../store/useSettingsStore";
+import type { Contact, Event } from "../../types";
 
 // ─── Design tokens (taken directly from code.html) ────────────────────────────
 const CYAN = "#00DAF3"; // secondary-fixed-dim
@@ -80,6 +87,8 @@ export default function HomeScreen() {
     sessionStartTime,
     startSession,
     stopSession,
+    startLocationHistoryTracking,
+    stopLocationHistoryTracking,
   } = useSessionStore();
   const monitoringInterval = useSettingsStore((s) => s.monitoringInterval);
   const stealthMode = useSettingsStore((s) => s.stealthMode);
@@ -134,11 +143,84 @@ export default function HomeScreen() {
     };
   }, [isActive, monitoringInterval]);
 
+  // Continuous GPS watcher — records the path travelled at a much finer
+  // resolution than the monitoring cycle, for the live map and path trail.
+  useEffect(() => {
+    if (!isActive) return;
+    startLocationHistoryTracking();
+    return () => stopLocationHistoryTracking();
+  }, [isActive]);
+
+  // Archives the just-ended session's risk-tagged path so it can be reviewed
+  // later from the History tab, then stops the session as normal.
+  function handleStopSession() {
+    const { sessionId, sessionStartTime, locationHistory } =
+      useSessionStore.getState();
+    if (sessionId && sessionStartTime) {
+      const events = useAlertStore.getState().events;
+      const path = buildRiskTaggedPath(locationHistory, events, sessionId);
+      if (path.length > 0) {
+        useSessionHistoryStore.getState().addSession({
+          id: sessionId,
+          startTime: sessionStartTime,
+          endTime: Date.now(),
+          path,
+          riskCounts: countRisks(path),
+        });
+      }
+    }
+    stopSession();
+  }
+
   function handleManualSOS() {
+    const { contactName, contactPhone, contactEmail } =
+      useSettingsStore.getState();
+
+    if (!contactPhone || !contactEmail) {
+      Alert.alert(
+        "Manual SOS",
+        "SOS alerts are not yet configured. Please set up your emergency contact in Settings.",
+        [{ text: "OK" }],
+      );
+      return;
+    }
+
     Alert.alert(
-      "Manual SOS",
-      "SOS alerts are not yet configured. Please set up your emergency contact in Settings.",
-      [{ text: "OK" }],
+      "Trigger Manual SOS?",
+      `This immediately sends SMS, email, and a phone call to ${contactName || "your emergency contact"}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Send SOS",
+          style: "destructive",
+          onPress: async () => {
+            const location = await getCurrentLocation();
+            const event: Event = {
+              id: generateUUID(),
+              sessionId: useSessionStore.getState().sessionId ?? generateUUID(),
+              timestamp: Date.now(),
+              riskLevel: "high",
+              aiSummary: "Manual SOS triggered by user.",
+              audioSummary: undefined,
+              audioUri: undefined,
+              photoUri: null,
+              transcript: undefined,
+              location,
+              source: "manual",
+            };
+            useAlertStore.getState().addEvent(event);
+
+            const contact: Contact = {
+              name: contactName || "Emergency Contact",
+              phone: contactPhone,
+              email: contactEmail,
+            };
+            triggerAlert(event, contact).catch((err) =>
+              console.error("[home] Manual SOS triggerAlert failed:", err),
+            );
+          },
+        },
+      ],
     );
   }
 
@@ -241,7 +323,10 @@ export default function HomeScreen() {
         </View>
       </SafeAreaView>
 
-      <DegradedModeBanner cameraGranted={cameraGranted} micGranted={micGranted} />
+      <DegradedModeBanner
+        cameraGranted={cameraGranted}
+        micGranted={micGranted}
+      />
 
       {/* ── Body ───────────────────────────────────────────────────────────── */}
       <View
@@ -453,20 +538,49 @@ export default function HomeScreen() {
           {/* Cap reached banner */}
           {capReached && (
             <TouchableOpacity
-              onPress={() => router.push('/upgrade')}
+              onPress={() => router.push("/upgrade")}
               activeOpacity={0.8}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14, backgroundColor: 'rgba(255,215,64,0.08)', borderWidth: 1, borderColor: 'rgba(255,215,64,0.30)' }}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                borderRadius: 14,
+                backgroundColor: "rgba(255,215,64,0.08)",
+                borderWidth: 1,
+                borderColor: "rgba(255,215,64,0.30)",
+              }}
             >
               <Zap size={16} color="#FFD740" strokeWidth={1.5} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: 13, color: '#FFD740' }}>
+                <Text
+                  style={{
+                    fontFamily: "DMSans_500Medium",
+                    fontSize: 13,
+                    color: "#FFD740",
+                  }}
+                >
                   Daily analysis limit reached
                 </Text>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#8888A0', marginTop: 1 }}>
+                <Text
+                  style={{
+                    fontFamily: "DMSans_400Regular",
+                    fontSize: 12,
+                    color: "#8888A0",
+                    marginTop: 1,
+                  }}
+                >
                   Upgrade for more coverage
                 </Text>
               </View>
-              <Text style={{ fontFamily: 'JetBrainsMono_400Regular', fontSize: 11, color: '#FFD740' }}>
+              <Text
+                style={{
+                  fontFamily: "JetBrainsMono_400Regular",
+                  fontSize: 11,
+                  color: "#FFD740",
+                }}
+              >
                 UPGRADE →
               </Text>
             </TouchableOpacity>
@@ -504,7 +618,7 @@ export default function HomeScreen() {
 
             {/* Start / Stop — bright cyan fill, dark text, glow (matching HTML) */}
             <TouchableOpacity
-              onPress={isActive ? stopSession : startSession}
+              onPress={isActive ? handleStopSession : startSession}
               activeOpacity={0.88}
               style={{
                 paddingVertical: 16,
@@ -536,10 +650,7 @@ export default function HomeScreen() {
       {/* Stealth overlay — renders on top of everything when stealth mode is
           active and a session is running. Appears black to a bystander.
           Tap anywhere to peek at the screen for 3 seconds. */}
-      <StealthOverlay
-        isVisible={stealthMode && isActive}
-        onWake={() => {}}
-      />
+      <StealthOverlay isVisible={stealthMode && isActive} onWake={() => {}} />
     </View>
   );
 }
