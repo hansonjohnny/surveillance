@@ -12,7 +12,7 @@
       "bundleIdentifier": "com.kwakuessi.surveillance-ai",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio", "location"]
+        "UIBackgroundModes": ["location"]
       }
     },
     "android": {
@@ -32,7 +32,6 @@
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.CAMERA"
       ],
@@ -73,7 +72,12 @@
         }
       ],
       "expo-image-picker",
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "enableBackgroundRecording": true
+        }
+      ],
       [
         "expo-camera",
         {
