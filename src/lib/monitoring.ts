@@ -98,6 +98,22 @@ export async function runMonitoringCycle(): Promise<void> {
     useAlertStore.getState().addEvent(event);
     incrementCycle();
 
+    // Pushes the event's current local state to Supabase — called at each
+    // point below where a meaningful field settles, not just when an alert
+    // fires. A linked guardian's dashboard (see lib/guardian.ts) reads
+    // straight from Supabase, so without this every Low/Medium event would
+    // be invisible to them; only High-risk alert-triggering events synced
+    // before. Idempotent (upsert), so a few extra calls per cycle as
+    // different fields resolve is harmless.
+    function syncEvent() {
+      useAlertStore
+        .getState()
+        .syncEventToSupabase(event.id)
+        .catch((err) =>
+          console.error("[monitoring] syncEventToSupabase failed:", err),
+        );
+    }
+
     // Reverse geocode asynchronously — patches location.address when ready.
     if (location) {
       reverseGeocode(location.lat, location.lng)
@@ -174,12 +190,15 @@ export async function runMonitoringCycle(): Promise<void> {
             );
           }
         }
+
+        syncEvent();
       })
       .catch((err) => {
         console.error("[monitoring] analyseImage failed:", err);
         useAlertStore.getState().updateEvent(event.id, {
           aiSummary: "Visual analysis unavailable.",
         });
+        syncEvent();
       });
 
     // Wait for the audio clip to finish recording, then transcribe and analyse.
@@ -198,6 +217,7 @@ export async function runMonitoringCycle(): Promise<void> {
       useAlertStore
         .getState()
         .updateEvent(event.id, { transcript: null, audioUri: null });
+      syncEvent();
     } else {
       useAlertStore.getState().updateEvent(event.id, { audioUri });
       transcribeAudio(audioUri)
@@ -206,6 +226,7 @@ export async function runMonitoringCycle(): Promise<void> {
             useAlertStore
               .getState()
               .updateEvent(event.id, { transcript: null });
+            syncEvent();
             return;
           }
           useAlertStore.getState().updateEvent(event.id, { transcript });
@@ -251,10 +272,13 @@ export async function runMonitoringCycle(): Promise<void> {
               );
             }
           }
+
+          syncEvent();
         })
-        .catch((err) =>
-          console.error("[monitoring] transcription failed:", err),
-        );
+        .catch((err) => {
+          console.error("[monitoring] transcription failed:", err);
+          syncEvent();
+        });
     }
   } catch (err) {
     console.error("[monitoring] runMonitoringCycle failed:", err);

@@ -22,6 +22,7 @@ import {
   Shield,
   ShieldAlert,
   User,
+  Users,
   Vibrate,
   X,
 } from 'lucide-react-native';
@@ -1578,6 +1579,12 @@ export default function SettingsScreen() {
               label="Backup Contact"
               value={storedBackupName || 'Escalates after 10 min'}
               onPress={() => setBackupContactModalOpen(true)}
+            />
+            <MenuRow
+              icon={<Users size={18} color={CYAN} strokeWidth={1.5} />}
+              label="Guardian"
+              value="Monitor a linked ward"
+              onPress={() => router.push('/guardian')}
             />
             <MenuRow
               icon={<Vibrate size={18} color={CYAN} strokeWidth={1.5} />}

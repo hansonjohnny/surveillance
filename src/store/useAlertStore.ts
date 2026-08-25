@@ -16,6 +16,11 @@ type AlertStore = {
   // immediately even while offline, then sync separately once connected.
   addAlertLocal: (alert: Alert) => void;
   updateAlert: (id: string, patch: Partial<Alert>) => void;
+  // Pushes an already-local event to Supabase (and its parent session, so
+  // the event's foreign key doesn't fail). Called once per cycle for every
+  // event now, not just ones that trigger an alert — a linked guardian's
+  // event log needs the full picture, not just High-risk history.
+  syncEventToSupabase: (eventId: string) => Promise<boolean>;
   // Pushes an already-local alert (and its event) to Supabase. Returns
   // whether it succeeded, so a caller can requeue it on failure.
   syncAlertToSupabase: (alertId: string) => Promise<boolean>;
@@ -56,6 +61,50 @@ export const useAlertStore = create<AlertStore>()(
           ),
         })),
 
+      syncEventToSupabase: async (eventId) => {
+        const userId = useSessionStore.getState().userId;
+        if (!userId) return true; // no account to sync to — nothing to retry
+
+        const event = get().events.find((e) => e.id === eventId);
+        if (!event) return true; // event was cleared locally — nothing to sync
+
+        // events.session_id references sessions.id — normally already
+        // created by useSessionStore.startSession, but upsert defensively
+        // in case that failed silently; this is cheap and idempotent.
+        const { error: sessionError } = await supabase
+          .from("sessions")
+          .upsert({ id: event.sessionId, user_id: userId });
+        if (sessionError) {
+          console.error(
+            "[useAlertStore] Failed to sync session to Supabase:",
+            sessionError.message,
+          );
+          return false;
+        }
+
+        const { error: eventError } = await supabase.from("events").upsert({
+          id: event.id,
+          session_id: event.sessionId,
+          user_id: userId,
+          timestamp: new Date(event.timestamp).toISOString(),
+          risk_level: event.riskLevel,
+          ai_summary: event.aiSummary,
+          audio_summary: event.audioSummary ?? null,
+          photo_url: event.photoUri,
+          transcript: event.transcript ?? null,
+          latitude: event.location?.lat ?? null,
+          longitude: event.location?.lng ?? null,
+        });
+        if (eventError) {
+          console.error(
+            "[useAlertStore] Failed to sync event to Supabase:",
+            eventError.message,
+          );
+          return false;
+        }
+        return true;
+      },
+
       syncAlertToSupabase: async (alertId) => {
         const userId = useSessionStore.getState().userId;
         if (!userId) return true; // no account to sync to — nothing to retry
@@ -63,42 +112,10 @@ export const useAlertStore = create<AlertStore>()(
         const alert = get().alerts.find((a) => a.id === alertId);
         if (!alert) return true; // alert was cleared locally — nothing to sync
 
-        // alerts.event_id references events.id, which in turn references
-        // sessions.id — neither is synced anywhere else, so upsert both here
-        // first or the write below fails on the foreign key constraints.
-        const event = get().events.find((e) => e.id === alert.eventId);
-        if (event) {
-          const { error: sessionError } = await supabase
-            .from("sessions")
-            .upsert({ id: event.sessionId, user_id: userId });
-          if (sessionError) {
-            console.error(
-              "[useAlertStore] Failed to sync session to Supabase:",
-              sessionError.message,
-            );
-            return false;
-          }
-
-          const { error: eventError } = await supabase.from("events").upsert({
-            id: event.id,
-            session_id: event.sessionId,
-            user_id: userId,
-            timestamp: new Date(event.timestamp).toISOString(),
-            risk_level: event.riskLevel,
-            ai_summary: event.aiSummary,
-            photo_url: event.photoUri,
-            transcript: event.transcript ?? null,
-            latitude: event.location?.lat ?? null,
-            longitude: event.location?.lng ?? null,
-          });
-          if (eventError) {
-            console.error(
-              "[useAlertStore] Failed to sync event to Supabase:",
-              eventError.message,
-            );
-            return false;
-          }
-        }
+        // alerts.event_id references events.id — make sure the event (and
+        // its session) exist in Supabase first or this fails on the FK.
+        const eventSynced = await get().syncEventToSupabase(alert.eventId);
+        if (!eventSynced) return false;
 
         // Upsert (not insert) so a retry after a partial failure doesn't
         // collide with a row that already made it to Supabase.
