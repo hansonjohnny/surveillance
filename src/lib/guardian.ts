@@ -9,7 +9,7 @@
 
 import type { Alert, Event, Location } from "../types";
 import { sendEmail } from "./alerts";
-import { supabase } from "./supabase";
+import { logFunctionError, supabase } from "./supabase";
 
 export type WardLink = {
   id: string;
@@ -53,7 +53,21 @@ export async function createWardAccount(
   );
 
   if (error) {
-    console.error("[guardian] createWardAccount failed:", error.message);
+    // A non-2xx response makes the SDK throw a generic error and discard
+    // the actual { success:false, error } body the function returned —
+    // every specific message create-ward-account crafts (already has an
+    // account, can't add yourself, etc.) lives in that discarded body, so
+    // pull it back out instead of always showing a generic message.
+    const context = (error as { context?: Response })?.context;
+    if (context && typeof context.json === "function") {
+      try {
+        const body = await context.json();
+        if (body?.error) return { success: false, error: body.error };
+      } catch {
+        // fall through to generic logging below
+      }
+    }
+    await logFunctionError("[guardian] createWardAccount failed", error);
     return { success: false, error: "Something went wrong. Please try again." };
   }
 

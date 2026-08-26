@@ -8,23 +8,7 @@ import type { Alert, Contact, Event, QueuedAlert } from "../types";
 import { generateUUID } from "./id";
 import { formatAddress } from "./location";
 import { isOnline } from "./network";
-import { supabase } from "./supabase";
-
-// supabase.functions.invoke() throws a generic "non-2xx" error that hides the
-// actual { success:false, error } body the edge function returned — pull the
-// real reason out of the response so failures are diagnosable from logs.
-async function logFunctionError(label: string, err: unknown): Promise<void> {
-  const context = (err as { context?: Response })?.context;
-  if (context && typeof context.json === "function") {
-    try {
-      console.error(`[alerts] ${label}:`, await context.json());
-      return;
-    } catch {
-      // fall through to generic logging below
-    }
-  }
-  console.error(`[alerts] ${label}:`, err);
-}
+import { logFunctionError, supabase } from "./supabase";
 
 // ─── Channel helpers ─────────────────────────────────────────────────────────
 
@@ -40,7 +24,7 @@ export async function sendSMS(to: string, message: string): Promise<boolean> {
     console.log("[alerts] sendSMS accepted:", data?.detail);
     return data?.success === true;
   } catch (err) {
-    await logFunctionError("sendSMS failed", err);
+    await logFunctionError("[alerts] sendSMS failed", err);
     return false;
   }
 }
@@ -58,7 +42,7 @@ export async function sendEmail(
     if (error) throw error;
     return data?.success === true;
   } catch (err) {
-    await logFunctionError("sendEmail failed", err);
+    await logFunctionError("[alerts] sendEmail failed", err);
     return false;
   }
 }
@@ -71,7 +55,7 @@ export async function makeCall(to: string, message: string): Promise<boolean> {
     if (error) throw error;
     return data?.success === true;
   } catch (err) {
-    await logFunctionError("makeCall failed", err);
+    await logFunctionError("[alerts] makeCall failed", err);
     return false;
   }
 }

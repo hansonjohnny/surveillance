@@ -69,19 +69,35 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { data: invited, error: inviteError } =
-      await db.auth.admin.inviteUserByEmail(trimmed, {
-        redirectTo: "surveillanceai://reset-password",
-      });
+    const { data, error: inviteError } = await db.auth.admin.inviteUserByEmail(
+      trimmed,
+      { redirectTo: "surveillanceai://reset-password" },
+    );
 
-    if (inviteError || !invited?.user) {
-      // Supabase returns a generic-ish message for "already registered" --
-      // surface a specific, actionable one instead of the raw error.
+    if (inviteError || !data?.user) {
+      const code = (inviteError as { code?: string } | undefined)?.code;
+      console.error("[create-ward-account] inviteUserByEmail failed:", inviteError);
+
+      // Supabase's built-in email sender (no custom SMTP configured)
+      // allows only a handful of emails per hour -- every auth email this
+      // project sends (password resets, invites, wellness) shares that
+      // cap, so this is a real, recurring case worth its own message
+      // rather than a generic one. Confirmed via a direct test against
+      // /auth/v1/invite, which returned exactly this status/code.
+      if (inviteError?.status === 429 || code === "over_email_send_rate_limit") {
+        return json(
+          {
+            success: false,
+            error:
+              "Email sending is rate-limited right now (Supabase's default sender allows only a few emails per hour without custom SMTP configured). Try again in a few minutes.",
+          },
+          429,
+        );
+      }
+
       const alreadyExists =
         inviteError?.status === 422 ||
         /already registered|already exists/i.test(inviteError?.message ?? "");
-
-      console.error("[create-ward-account] inviteUserByEmail failed:", inviteError);
 
       return json(
         {
@@ -96,7 +112,7 @@ Deno.serve(async (req) => {
 
     const { error: linkError } = await db.from("guardian_links").insert({
       guardian_id: guardian.id,
-      ward_id: invited.user.id,
+      ward_id: data.user.id,
       ward_email: trimmed,
       status: "active",
     });

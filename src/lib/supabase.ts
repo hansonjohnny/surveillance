@@ -27,3 +27,23 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+// supabase.functions.invoke() throws a generic "non-2xx" error that hides
+// the actual { success:false, error } body the Edge Function returned —
+// pull the real reason out of the response so failures are diagnosable
+// from logs instead of always showing the same generic message.
+export async function logFunctionError(
+  label: string,
+  err: unknown,
+): Promise<void> {
+  const context = (err as { context?: Response })?.context;
+  if (context && typeof context.json === "function") {
+    try {
+      console.error(`${label}:`, await context.json());
+      return;
+    } catch {
+      // fall through to generic logging below
+    }
+  }
+  console.error(`${label}:`, err);
+}
