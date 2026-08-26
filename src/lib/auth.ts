@@ -12,7 +12,7 @@
  */
 
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { CONFIRM_BRIDGE_URL, supabase } from "./supabase";
 
 // ─── Registration ─────────────────────────────────────────────────────────────
 
@@ -76,20 +76,21 @@ export async function sendPasswordResetEmail(
   email: string,
 ): Promise<{ success: boolean; error: string | null }> {
   try {
-    // redirectTo must exactly match the "scheme" value in app.json
-    // ("surveillanceai"). Supabase sends an email containing a link
-    // like:
-    //   https://[project].supabase.co/auth/v1/verify?...&redirect_to=surveillanceai://reset-password
+    // redirectTo must be in Supabase's Auth > URL Configuration redirect
+    // allowlist or it silently falls back to the project's Site URL.
+    // Supabase sends an email containing a link like:
+    //   https://[project].supabase.co/auth/v1/verify?...&redirect_to=<CONFIRM_BRIDGE_URL>
     //
     // Supabase's server processes the token, then 302-redirects the
-    // user's browser to:
-    //   surveillanceai://reset-password#access_token=...&refresh_token=...
-    //
-    // iOS/Android intercepts that custom-scheme URL and opens this
-    // app. The deep link listener in app/_layout.tsx catches it and
-    // routes to /(auth)/reset-password with the tokens as params.
+    // user's browser to CONFIRM_BRIDGE_URL#access_token=...&refresh_token=...
+    // — a real https page (confirm.html, hosted on GitHub Pages) rather
+    // than the raw surveillanceai:// scheme directly, since some mail
+    // clients' in-app browsers refuse to follow a redirect straight to an
+    // unknown scheme. That page forwards into the app; the deep link
+    // listener in app/_layout.tsx catches it there and routes to
+    // /(auth)/reset-password with the tokens as params.
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: "surveillanceai://reset-password",
+      redirectTo: CONFIRM_BRIDGE_URL,
     });
     if (error) return { success: false, error: error.message };
 

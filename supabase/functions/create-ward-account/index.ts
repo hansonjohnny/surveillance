@@ -6,7 +6,8 @@
 // (service-role only, never available client-side) to create the
 // account and send Supabase's built-in invite email in one call; the
 // invite link reuses the app's existing password-reset deep link
-// (surveillanceai://reset-password) since setting a password is the
+// (surveillanceai://reset-password, reached via the confirm.html bridge
+// page -- see CONFIRM_BRIDGE_URL below) since setting a password is the
 // same operation whether the tokens arrived via recovery or invite --
 // no new screen needed for the ward's first login.
 //
@@ -26,6 +27,12 @@ const CORS = {
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
+
+// Must match src/lib/supabase.ts's CONFIRM_BRIDGE_URL and be present in
+// Supabase's Auth > URL Configuration redirect allowlist -- an unlisted
+// redirectTo silently falls back to Site URL instead of erroring, which
+// is what previously sent this invite link to http://localhost:3000.
+const CONFIRM_BRIDGE_URL = "https://hansonjohnny.github.io/surveillance/confirm.html";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -71,7 +78,7 @@ Deno.serve(async (req) => {
 
     const { data, error: inviteError } = await db.auth.admin.inviteUserByEmail(
       trimmed,
-      { redirectTo: "surveillanceai://reset-password" },
+      { redirectTo: CONFIRM_BRIDGE_URL },
     );
 
     if (inviteError || !data?.user) {

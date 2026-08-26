@@ -9,7 +9,7 @@
 
 import type { Alert, Event, Location } from "../types";
 import { sendEmail } from "./alerts";
-import { logFunctionError, supabase } from "./supabase";
+import { CONFIRM_BRIDGE_URL, logFunctionError, supabase } from "./supabase";
 
 export type WardLink = {
   id: string;
@@ -139,7 +139,11 @@ export async function inviteWard(
     return { success: false, error: "Something went wrong. Please try again." };
   }
 
-  const deepLink = `surveillanceai://guardian-confirm?linkId=${link.id}`;
+  // A real https link, not the raw surveillanceai:// scheme — plain-text
+  // custom-scheme links often aren't even tappable in mail clients that
+  // don't auto-linkify unknown schemes. confirm.html forwards into the
+  // app from here the same way it does for Supabase's own auth emails.
+  const deepLink = `${CONFIRM_BRIDGE_URL}?linkId=${link.id}`;
   const guardianLabel =
     (typeof user.user_metadata?.display_name === "string"
       ? user.user_metadata.display_name

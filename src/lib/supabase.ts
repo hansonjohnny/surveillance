@@ -19,6 +19,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // the JS client falls back to localStorage (which doesn't exist here)
 // and the session is lost on every cold launch, forcing the user to log
 // in again each time they open the app.
+// Public bridge page (confirm.html, repo root, hosted on GitHub Pages)
+// that every Supabase auth email's redirectTo points at. Must be added to
+// Supabase's Auth > URL Configuration redirect allowlist — an
+// unlisted redirectTo silently falls back to Site URL instead of erroring,
+// which is what previously sent these links to http://localhost:3000.
+export const CONFIRM_BRIDGE_URL =
+  "https://hansonjohnny.github.io/surveillance/confirm.html";
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     storage: AsyncStorage,

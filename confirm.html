@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Surveillance AI — Confirm</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; min-height:100%; background:#0A0A0F; color:#F0F0F5;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .card { text-align:center; padding:32px; max-width:340px; margin:0 auto; padding-top:120px; }
+  .card h1 { font-size:20px; margin:0 0 8px; }
+  .card p { color:#8888A0; font-size:14px; line-height:1.5; margin:0 0 24px; }
+  .btn { display:inline-block; height:52px; line-height:52px; padding:0 28px;
+    border-radius:9999px; background:#00E5FF; color:#001F24; font-weight:600;
+    text-decoration:none; font-size:15px; }
+  .spinner { width:28px; height:28px; margin:0 auto 20px; border-radius:50%;
+    border:3px solid rgba(0,229,255,0.2); border-top-color:#00E5FF;
+    animation:spin 0.8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner" id="spinner"></div>
+    <h1 id="title">Opening Surveillance AI…</h1>
+    <p id="sub">If the app doesn't open automatically, tap below.</p>
+    <a class="btn" id="openBtn" href="#">Open in Surveillance AI</a>
+  </div>
+
+  <script>
+    // Served via GitHub Pages, not Supabase — this page exists only to
+    // bridge an email link (which must be a real https URL Supabase's
+    // redirect allowlist will accept) into the app's custom
+    // surveillanceai:// scheme. Some mail clients' in-app browsers won't
+    // auto-follow a script-triggered redirect to an unknown scheme, so
+    // this both attempts it automatically AND gives a real tappable link
+    // (a user gesture on a link is far more likely to be allowed through
+    // than an automatic window.location change).
+    //
+    // Two source shapes land here:
+    //   - Supabase's own /auth/v1/verify redirect (password reset, and
+    //     the ward invite-to-set-password flow) — arrives as a hash
+    //     fragment: #access_token=...&refresh_token=...&type=...
+    //   - lib/guardian.ts's inviteWard confirmation email — arrives as a
+    //     query param: ?linkId=...
+    var hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+    var hashParams = new URLSearchParams(hash);
+    var queryParams = new URLSearchParams(location.search);
+
+    var target = null;
+    if (hashParams.get('access_token')) {
+      target = 'surveillanceai://reset-password#' + hash;
+    } else if (queryParams.get('linkId')) {
+      target = 'surveillanceai://guardian-confirm?linkId=' +
+        encodeURIComponent(queryParams.get('linkId'));
+    }
+
+    var openBtn = document.getElementById('openBtn');
+
+    if (!target) {
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('title').textContent = 'Link unavailable';
+      document.getElementById('sub').textContent =
+        "This link is missing what it needs to open the app. Try requesting it again.";
+      openBtn.style.display = 'none';
+    } else {
+      openBtn.href = target;
+      window.location.href = target;
+    }
+  </script>
+</body>
+</html>
