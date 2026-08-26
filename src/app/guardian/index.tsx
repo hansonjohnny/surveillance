@@ -1,13 +1,23 @@
 import {
+  createWardAccount,
   fetchWardSnapshot,
   inviteWard,
   listWards,
   revokeWardLink,
   type WardLink,
 } from "@/lib/guardian";
+import { supabase } from "@/lib/supabase";
 import type { RiskLevel } from "@/types";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ArrowLeft, ChevronRight, Shield, UserPlus, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Clock,
+  LogOut,
+  Shield,
+  UserPlus,
+  X,
+} from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -89,7 +99,12 @@ function WardRow({
   onPress: () => void;
   onRevoke: () => void;
 }) {
-  const dotColor = ward.riskLevel ? RISK_COLORS[ward.riskLevel] : "#555568";
+  const isPending = ward.status === "pending";
+  const dotColor = isPending
+    ? "#FFD740"
+    : ward.riskLevel
+      ? RISK_COLORS[ward.riskLevel]
+      : "#555568";
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -124,18 +139,22 @@ function WardRow({
         >
           {ward.wardEmail ?? "Unknown"}
         </Text>
-        <Text
-          style={{
-            fontFamily: "JetBrainsMono_400Regular",
-            fontSize: 11,
-            color: MUTED,
-            marginTop: 2,
-          }}
-        >
-          {ward.loadingSnapshot
-            ? "Loading..."
-            : `Last seen ${relativeTime(ward.lastSeenAt)}`}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+          {isPending ? <Clock size={11} color="#FFD740" strokeWidth={1.5} /> : null}
+          <Text
+            style={{
+              fontFamily: "JetBrainsMono_400Regular",
+              fontSize: 11,
+              color: isPending ? "#FFD740" : MUTED,
+            }}
+          >
+            {isPending
+              ? "Awaiting their confirmation"
+              : ward.loadingSnapshot
+                ? "Loading..."
+                : `Last seen ${relativeTime(ward.lastSeenAt)}`}
+          </Text>
+        </View>
       </View>
       <TouchableOpacity
         onPress={onRevoke}
@@ -150,12 +169,17 @@ function WardRow({
 }
 
 // ─── InviteModal ──────────────────────────────────────────────────────────────
+// Two distinct paths, per migration 011: creating a new account activates
+// immediately (setting the password IS the confirmation); linking an
+// existing one stays pending until that person accepts an email.
+type InviteMode = "create" | "link";
+
 function InviteModal({
-  visible,
+  mode,
   onClose,
   onInvited,
 }: {
-  visible: boolean;
+  mode: InviteMode | null;
   onClose: () => void;
   onInvited: () => void;
 }) {
@@ -164,9 +188,11 @@ function InviteModal({
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit() {
+    if (!mode) return;
     setSubmitting(true);
     setError(null);
-    const result = await inviteWard(email);
+    const result =
+      mode === "create" ? await createWardAccount(email) : await inviteWard(email);
     setSubmitting(false);
     if (!result.success) {
       setError(result.error ?? "Something went wrong.");
@@ -179,7 +205,7 @@ function InviteModal({
 
   return (
     <Modal
-      visible={visible}
+      visible={mode !== null}
       animationType="slide"
       transparent
       onRequestClose={onClose}
@@ -208,7 +234,7 @@ function InviteModal({
               marginBottom: 8,
             }}
           >
-            Invite a Ward
+            {mode === "create" ? "Create a Ward Account" : "Link an Existing Account"}
           </Text>
           <Text
             style={{
@@ -218,8 +244,9 @@ function InviteModal({
               marginBottom: 16,
             }}
           >
-            Enter the email address they used to sign up for Surveillance AI.
-            The link activates immediately, no action needed on their side.
+            {mode === "create"
+              ? "Enter their email — we'll create their account and send them a link to set their own password. No password ever passes through you."
+              : "Enter the email they already use for Surveillance AI. They'll get an email and must confirm before you can see anything."}
           </Text>
           <TextInput
             value={email}
@@ -277,7 +304,7 @@ function InviteModal({
                   color: "#001F24",
                 }}
               >
-                Send Invite
+                {mode === "create" ? "Create Account" : "Send Confirmation Email"}
               </Text>
             )}
           </TouchableOpacity>
@@ -306,7 +333,7 @@ export default function GuardianListScreen() {
   const router = useRouter();
   const [wards, setWards] = useState<WardRowState[]>([]);
   const [loading, setLoading] = useState(true);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteMode, setInviteMode] = useState<InviteMode | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -316,33 +343,37 @@ export default function GuardianListScreen() {
         ...l,
         riskLevel: null,
         lastSeenAt: null,
-        loadingSnapshot: true,
+        loadingSnapshot: l.status === "active",
       })),
     );
     setLoading(false);
 
-    // Fetch each ward's latest snapshot for the risk dot / last-seen time —
-    // acceptable as N small fetches given a guardian typically links a
-    // handful of wards, not hundreds.
-    links.forEach(async (link) => {
-      const snapshot = await fetchWardSnapshot(link.wardId);
-      const latestEvent = snapshot.events[0] ?? null;
-      setWards((prev) =>
-        prev.map((w) =>
-          w.id === link.id
-            ? {
-                ...w,
-                riskLevel: latestEvent?.riskLevel ?? null,
-                lastSeenAt:
-                  snapshot.session?.lastLocationAt ??
-                  latestEvent?.timestamp ??
-                  null,
-                loadingSnapshot: false,
-              }
-            : w,
-        ),
-      );
-    });
+    // Fetch each active ward's latest snapshot for the risk dot / last-seen
+    // time — acceptable as N small fetches given a guardian typically links
+    // a handful of wards, not hundreds. Skipped for pending links: RLS
+    // (migration 011) blocks any read until they're accepted, so there's
+    // nothing to fetch yet.
+    links
+      .filter((link) => link.status === "active")
+      .forEach(async (link) => {
+        const snapshot = await fetchWardSnapshot(link.wardId);
+        const latestEvent = snapshot.events[0] ?? null;
+        setWards((prev) =>
+          prev.map((w) =>
+            w.id === link.id
+              ? {
+                  ...w,
+                  riskLevel: latestEvent?.riskLevel ?? null,
+                  lastSeenAt:
+                    snapshot.session?.lastLocationAt ??
+                    latestEvent?.timestamp ??
+                    null,
+                  loadingSnapshot: false,
+                }
+              : w,
+          ),
+        );
+      });
   }, []);
 
   useFocusEffect(
@@ -369,6 +400,17 @@ export default function GuardianListScreen() {
     );
   }
 
+  function handleSignOut() {
+    RNAlert.alert("Sign Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: () => supabase.auth.signOut(),
+      },
+    ]);
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
       <StatusBar barStyle="light-content" backgroundColor={BG} />
@@ -377,25 +419,34 @@ export default function GuardianListScreen() {
           style={{
             flexDirection: "row",
             alignItems: "center",
+            justifyContent: "space-between",
             height: 64,
             paddingHorizontal: 16,
             borderBottomWidth: 1,
             borderBottomColor: "rgba(255, 255, 255, 0.10)",
           }}
         >
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
-            <ArrowLeft size={20} color={CYAN} strokeWidth={1.5} />
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <TouchableOpacity
+              onPress={() => (router.canGoBack() ? router.back() : router.replace("/guardian"))}
+              style={{ padding: 8 }}
+            >
+              <ArrowLeft size={20} color={CYAN} strokeWidth={1.5} />
+            </TouchableOpacity>
+            <Text
+              style={{
+                fontFamily: "Outfit_700Bold",
+                fontSize: 17,
+                color: "#F0F0F5",
+                marginLeft: 4,
+              }}
+            >
+              Guardian
+            </Text>
+          </View>
+          <TouchableOpacity onPress={handleSignOut} style={{ padding: 8 }}>
+            <LogOut size={18} color="#FF3D3D" strokeWidth={1.5} />
           </TouchableOpacity>
-          <Text
-            style={{
-              fontFamily: "Outfit_700Bold",
-              fontSize: 17,
-              color: "#F0F0F5",
-              marginLeft: 4,
-            }}
-          >
-            Guardian
-          </Text>
         </View>
       </SafeAreaView>
 
@@ -407,46 +458,80 @@ export default function GuardianListScreen() {
             <WardRow
               key={w.id}
               ward={w}
-              onPress={() =>
+              onPress={() => {
+                if (w.status === "pending") {
+                  RNAlert.alert(
+                    "Awaiting confirmation",
+                    `${w.wardEmail ?? "This person"} hasn't accepted your request yet — there's nothing to show until they do.`,
+                  );
+                  return;
+                }
                 router.push(
                   `/guardian/${w.wardId}?email=${encodeURIComponent(w.wardEmail ?? "")}`,
-                )
-              }
+                );
+              }}
               onRevoke={() => handleRevoke(w)}
             />
           ))
         )}
 
-        <TouchableOpacity
-          onPress={() => setInviteOpen(true)}
-          activeOpacity={0.85}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            height: 52,
-            borderRadius: 9999,
-            backgroundColor: CYAN,
-            marginTop: 12,
-          }}
-        >
-          <UserPlus size={18} color="#001F24" strokeWidth={2} />
-          <Text
+        <View style={{ gap: 10, marginTop: 12 }}>
+          <TouchableOpacity
+            onPress={() => setInviteMode("create")}
+            activeOpacity={0.85}
             style={{
-              fontFamily: "DMSans_500Medium",
-              fontSize: 15,
-              color: "#001F24",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              height: 52,
+              borderRadius: 9999,
+              backgroundColor: CYAN,
             }}
           >
-            Invite a Ward
-          </Text>
-        </TouchableOpacity>
+            <UserPlus size={18} color="#001F24" strokeWidth={2} />
+            <Text
+              style={{
+                fontFamily: "DMSans_500Medium",
+                fontSize: 15,
+                color: "#001F24",
+              }}
+            >
+              Create a Ward Account
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setInviteMode("link")}
+            activeOpacity={0.85}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              height: 52,
+              borderRadius: 9999,
+              borderWidth: 1,
+              borderColor: "rgba(255, 255, 255, 0.15)",
+            }}
+          >
+            <UserPlus size={18} color="#F0F0F5" strokeWidth={1.5} />
+            <Text
+              style={{
+                fontFamily: "DMSans_500Medium",
+                fontSize: 15,
+                color: "#F0F0F5",
+              }}
+            >
+              Link an Existing Account
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <InviteModal
-        visible={inviteOpen}
-        onClose={() => setInviteOpen(false)}
+        mode={inviteMode}
+        onClose={() => setInviteMode(null)}
         onInvited={refresh}
       />
     </View>

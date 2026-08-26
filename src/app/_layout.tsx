@@ -103,6 +103,16 @@ function parseResetUrl(url: string): ResetTokens | null {
   };
 }
 
+// Parses a surveillanceai://guardian-confirm?linkId=... deep link (sent
+// via the confirmation email lib/guardian.ts's inviteWard fires) and
+// returns the guardian_links row id, or null.
+function parseGuardianConfirmUrl(url: string): string | null {
+  if (!url.startsWith("surveillanceai://guardian-confirm")) return null;
+  const query = url.includes("?") ? url.split("?")[1] : "";
+  const params = Object.fromEntries(new URLSearchParams(query));
+  return params.linkId ?? null;
+}
+
 export default function RootLayout() {
   const router = useRouter();
 
@@ -128,6 +138,13 @@ export default function RootLayout() {
   // the app was ready to navigate. Set to non-null to trigger routing
   // to /(auth)/reset-password in the routing effect below.
   const [pendingReset, setPendingReset] = useState<ResetTokens | null>(null);
+
+  // A guardian-confirm deep link's linkId, if one arrived — set to
+  // non-null to trigger routing to /guardian-confirm in the routing
+  // effect below, same pattern as pendingReset.
+  const [pendingGuardianConfirm, setPendingGuardianConfirm] = useState<
+    string | null
+  >(null);
 
   // Prevents the routing effect from re-running on token refreshes while
   // the user is mid-onboarding, which caused the contact screen to glitch.
@@ -203,16 +220,19 @@ export default function RootLayout() {
         // is never visible while the request is in flight or if it fails.
         useSettingsStore.getState().setPlan("free");
         useSettingsStore.getState().setTodayUsage(0);
+        useSettingsStore.getState().setRole("self");
 
-        // Sync plan from DB to local store so the monitoring cycle uses the
-        // correct tier even after a reinstall or AsyncStorage wipe.
+        // Sync plan + role from DB to local store so the monitoring cycle
+        // and post-onboarding routing use the correct values even after a
+        // reinstall or AsyncStorage wipe.
         supabase
           .from("users")
-          .select("plan")
+          .select("plan, role")
           .eq("id", s.user.id)
           .single()
           .then(({ data }) => {
             if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
+            if (data?.role) useSettingsStore.getState().setRole(data.role);
           })
           .catch(console.warn);
       }
@@ -250,6 +270,8 @@ export default function RootLayout() {
       if (initialUrl) {
         const tokens = parseResetUrl(initialUrl);
         if (tokens) setPendingReset(tokens);
+        const linkId = parseGuardianConfirmUrl(initialUrl);
+        if (linkId) setPendingGuardianConfirm(linkId);
       }
 
       // Register the wellness notification category and background task.
@@ -294,16 +316,18 @@ export default function RootLayout() {
           // Reset to safe defaults before the fetch — see the same comment in init().
           useSettingsStore.getState().setPlan("free");
           useSettingsStore.getState().setTodayUsage(0);
+          useSettingsStore.getState().setRole("self");
 
-          // Re-sync plan on every sign-in so the local store always
-          // matches what the admin assigned in the database.
+          // Re-sync plan + role on every sign-in so the local store always
+          // matches what's in the database.
           supabase
             .from("users")
-            .select("plan")
+            .select("plan, role")
             .eq("id", newSession.user.id)
             .single()
             .then(({ data }) => {
               if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
+              if (data?.role) useSettingsStore.getState().setRole(data.role);
             })
             .catch(console.warn);
         }
@@ -326,6 +350,8 @@ export default function RootLayout() {
     const sub = Linking.addEventListener("url", (event) => {
       const tokens = parseResetUrl(event.url);
       if (tokens) setPendingReset(tokens);
+      const linkId = parseGuardianConfirmUrl(event.url);
+      if (linkId) setPendingGuardianConfirm(linkId);
     });
 
     return () => sub.remove();
@@ -398,6 +424,18 @@ export default function RootLayout() {
       return;
     }
 
+    // Same priority for a guardian-confirm link — only meaningful once
+    // signed in (the ward needs their own session to accept/decline), so
+    // it waits behind sign-in rather than being handled here directly.
+    if (pendingGuardianConfirm && isAuthenticated) {
+      router.replace({
+        pathname: "/guardian-confirm",
+        params: { linkId: pendingGuardianConfirm },
+      });
+      setPendingGuardianConfirm(null);
+      return;
+    }
+
     // After the initial route, only react to sign-out. Token refreshes
     // change the session object without changing isAuthenticated — ignoring
     // them prevents the onboarding screens from glitching mid-flow.
@@ -429,9 +467,20 @@ export default function RootLayout() {
       return;
     }
 
-    // Fully authenticated and onboarded — go to the main app.
-    router.replace("/(tabs)/home");
-  }, [fontsLoaded, fontError, ready, isAuthenticated, pendingReset]);
+    // Fully authenticated and onboarded — go to the main app. A guardian
+    // lands on their ward list instead of the self-monitoring Home screen
+    // (sign-up.tsx does the equivalent explicit redirect right after a
+    // fresh sign-up; this covers every later app open).
+    const { role } = useSettingsStore.getState();
+    router.replace(role === "guardian" ? "/guardian" : "/(tabs)/home");
+  }, [
+    fontsLoaded,
+    fontError,
+    ready,
+    isAuthenticated,
+    pendingReset,
+    pendingGuardianConfirm,
+  ]);
 
   return (
     <>

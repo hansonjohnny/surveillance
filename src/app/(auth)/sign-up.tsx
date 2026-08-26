@@ -85,17 +85,34 @@ export default function SignUpScreen() {
       return;
     }
 
-    // Sync onboarding contact + preferences to Supabase now that
-    // the user is authenticated and auth.uid() resolves.
+    // who.tsx routes anything but "myself" to guardian-setup.tsx instead
+    // of the rest of self-monitoring onboarding — this is the one place
+    // both paths converge, so it's where they finally diverge again.
+    const isGuardian = useOnboardingStore.getState().data.who !== "myself";
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
+
     if (user) {
-      await syncToSupabase(user.id);
+      if (isGuardian) {
+        const { error: roleError } = await supabase
+          .from("users")
+          .update({ role: "guardian" })
+          .eq("id", user.id);
+        if (roleError) {
+          console.error("[sign-up] Failed to set guardian role:", roleError.message);
+        }
+      } else {
+        // Sync onboarding contact + preferences to Supabase now that the
+        // user is authenticated and auth.uid() resolves. Skipped for a
+        // guardian — they have no monitoring preferences to sync.
+        await syncToSupabase(user.id);
+      }
     }
 
     setLoading(false);
-    router.replace("/(tabs)/home");
+    router.replace(isGuardian ? ("/guardian" as never) : "/(tabs)/home");
   }
 
   return (

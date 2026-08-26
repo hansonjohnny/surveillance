@@ -139,7 +139,16 @@ export default function WhoScreen() {
             onPress={() => {
               if (!selected) return;
               setOnboarding({ who: selected });
-              router.push("/(onboarding)/interstitial" as any);
+              // Anything but "Myself" means this person is setting the app
+              // up to monitor someone else, not to carry themselves —
+              // none of the following screens (emergency contact,
+              // monitoring preferences, camera/mic/location permissions)
+              // apply to a phone that isn't the one being monitored.
+              router.push(
+                selected === "myself"
+                  ? ("/(onboarding)/interstitial" as any)
+                  : ("/(onboarding)/guardian-setup" as any),
+              );
             }}
             enabled={!!selected}
           />

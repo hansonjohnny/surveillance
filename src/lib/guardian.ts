@@ -8,12 +8,14 @@
 // supabase/migrations/009_guardian_links.sql.
 
 import type { Alert, Event, Location } from "../types";
+import { sendEmail } from "./alerts";
 import { supabase } from "./supabase";
 
 export type WardLink = {
   id: string;
   wardId: string;
   wardEmail: string | null;
+  status: "pending" | "active";
   createdAt: number;
 };
 
@@ -30,8 +32,42 @@ export type WardSnapshot = {
 
 const RECENT_LIMIT = 30;
 
-// ─── Inviting / managing links ─────────────────────────────────────────────
+// ─── Adding a ward ──────────────────────────────────────────────────────────
 
+// Provisions a brand-new account for someone who doesn't have one yet —
+// the guardian never sees or sets the password. Activates immediately:
+// setting the password via the invite email is itself the confirmation
+// step, so no separate accept flow is needed here (contrast with
+// inviteWard below).
+export async function createWardAccount(
+  email: string,
+): Promise<{ success: boolean; error?: string }> {
+  const trimmed = email.trim().toLowerCase();
+  if (!trimmed) {
+    return { success: false, error: "Enter an email address." };
+  }
+
+  const { data, error } = await supabase.functions.invoke(
+    "create-ward-account",
+    { body: { email: trimmed } },
+  );
+
+  if (error) {
+    console.error("[guardian] createWardAccount failed:", error.message);
+    return { success: false, error: "Something went wrong. Please try again." };
+  }
+
+  if (!data?.success) {
+    return { success: false, error: data?.error ?? "Something went wrong." };
+  }
+
+  return { success: true };
+}
+
+// Links an *existing*, independent account. That person already has their
+// own history, so — unlike createWardAccount — this stays "pending" and
+// grants no read access (see migration 011's RLS) until they tap Accept
+// on the email this sends.
 export async function inviteWard(
   email: string,
 ): Promise<{ success: boolean; error?: string }> {
@@ -68,22 +104,84 @@ export async function inviteWard(
     return { success: false, error: "You can't add yourself as a ward." };
   }
 
-  const { error } = await supabase.from("guardian_links").insert({
-    guardian_id: user.id,
-    ward_id: wardId,
-    ward_email: trimmed,
-  });
+  const { data: link, error } = await supabase
+    .from("guardian_links")
+    .insert({
+      guardian_id: user.id,
+      ward_id: wardId,
+      ward_email: trimmed,
+      guardian_email: user.email,
+      status: "pending",
+    })
+    .select("id")
+    .single();
 
-  if (error) {
+  if (error || !link) {
     // Postgres unique_violation — a link between these two already exists.
-    if (error.code === "23505") {
+    if (error?.code === "23505") {
       return { success: false, error: "You're already monitoring this person." };
     }
-    console.error("[guardian] inviteWard insert failed:", error.message);
+    console.error("[guardian] inviteWard insert failed:", error?.message);
     return { success: false, error: "Something went wrong. Please try again." };
   }
 
+  const deepLink = `surveillanceai://guardian-confirm?linkId=${link.id}`;
+  const guardianLabel =
+    (typeof user.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name
+      : null) ?? user.email ?? "Someone";
+
+  const emailSent = await sendEmail(
+    trimmed,
+    "Someone wants to monitor your status on Surveillance AI",
+    `${guardianLabel} (${user.email}) wants to be able to see your live status, event log, and alerts on Surveillance AI.\n\n` +
+      `If you recognise this request, open the link below to confirm:\n${deepLink}\n\n` +
+      `If you don't recognise it, you can safely ignore this email — nothing is shared until you confirm.`,
+    guardianLabel,
+  );
+
+  if (!emailSent) {
+    console.warn(
+      "[guardian] inviteWard: link created but confirmation email failed to send",
+    );
+  }
+
   return { success: true };
+}
+
+// Used by guardian-confirm.tsx to show who's requesting before the ward
+// decides. Covered by the same "select as guardian or ward" RLS policy
+// as everything else on this table — a pending link is still visible to
+// both parties, it just grants no read access yet.
+export async function getPendingLink(
+  linkId: string,
+): Promise<{ id: string; guardianEmail: string | null; status: "pending" | "active" } | null> {
+  const { data, error } = await supabase
+    .from("guardian_links")
+    .select("id, guardian_email, status")
+    .eq("id", linkId)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (error) console.error("[guardian] getPendingLink failed:", error.message);
+    return null;
+  }
+
+  return { id: data.id, guardianEmail: data.guardian_email, status: data.status };
+}
+
+// Called from the ward's side (guardian-confirm.tsx) after they tap
+// Accept on the confirmation email.
+export async function acceptGuardianLink(linkId: string): Promise<boolean> {
+  const { error } = await supabase.rpc("accept_guardian_link", {
+    link_id: linkId,
+  });
+
+  if (error) {
+    console.error("[guardian] acceptGuardianLink failed:", error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function listWards(): Promise<WardLink[]> {
@@ -97,7 +195,7 @@ export async function listWards(): Promise<WardLink[]> {
   // monitor," not every link that mentions you.
   const { data, error } = await supabase
     .from("guardian_links")
-    .select("id, ward_id, ward_email, created_at")
+    .select("id, ward_id, ward_email, status, created_at")
     .eq("guardian_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -110,6 +208,7 @@ export async function listWards(): Promise<WardLink[]> {
     id: row.id,
     wardId: row.ward_id,
     wardEmail: row.ward_email,
+    status: row.status,
     createdAt: new Date(row.created_at).getTime(),
   }));
 }

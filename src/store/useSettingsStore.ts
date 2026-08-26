@@ -30,6 +30,10 @@ type Settings = {
   plan: Plan;
   todayUsage: number;
   usageDate: string | null; // ISO date (YYYY-MM-DD) of the last todayUsage update
+  // Chosen at signup (see (onboarding)/who.tsx + (auth)/sign-up.tsx) and
+  // independent of `plan` — no plan-tier gating or inheritance yet, see
+  // supabase/migrations/011_guardian_role.sql.
+  role: 'self' | 'guardian';
 };
 
 type SettingsStore = Settings & {
@@ -39,6 +43,7 @@ type SettingsStore = Settings & {
   setPlan: (plan: Plan) => void;
   setTodayUsage: (count: number) => void;
   resetUsageIfNewDay: () => void;
+  setRole: (role: 'self' | 'guardian') => void;
 };
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -62,9 +67,11 @@ export const useSettingsStore = create<SettingsStore>()(
       plan: 'free',
       todayUsage: 0,
       usageDate: null,
+      role: 'self',
 
       updateSettings: (partial) => set(partial),
       setPlan: (plan) => set({ plan }),
+      setRole: (role) => set({ role }),
       setTodayUsage: (count) => {
         const today = new Date().toISOString().split('T')[0];
         set((s) => s.usageDate !== today ? { todayUsage: 0, usageDate: today } : { todayUsage: count, usageDate: today });

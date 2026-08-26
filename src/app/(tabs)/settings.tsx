@@ -1372,7 +1372,7 @@ export default function SettingsScreen() {
               await AsyncStorage.clear();
               await SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self' });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1417,7 +1417,7 @@ export default function SettingsScreen() {
                 SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY),
               ]);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self' });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
