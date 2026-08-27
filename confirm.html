@@ -52,41 +52,55 @@
     var queryParams = new URLSearchParams(location.search);
     var type = hashParams.get('type');
 
-    var target = null;
-    if (hashParams.get('access_token') && type === 'signup') {
-      target = 'surveillanceai://email-confirmed#' + hash;
-    } else if (hashParams.get('access_token')) {
-      target = 'surveillanceai://reset-password#' + hash;
-    } else if (queryParams.get('linkId')) {
-      target = 'surveillanceai://guardian-confirm?linkId=' +
-        encodeURIComponent(queryParams.get('linkId'));
-    }
-
     var openBtn = document.getElementById('openBtn');
 
-    if (!target) {
+    // A signup confirmation's only job is verifying the email address —
+    // that already happened server-side the moment this page loaded
+    // (Supabase's /auth/v1/verify ran before redirecting here). No need
+    // to open the app at all: the person might be checking email from a
+    // laptop or any device without it installed, and forcing an app
+    // hand-off here would fail for no reason. The actual account setup
+    // (role, phone, contact info) completes automatically the next time
+    // they sign in, wherever the app actually is.
+    if (hashParams.get('access_token') && type === 'signup') {
       document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Link unavailable';
+      document.getElementById('title').textContent = 'Email confirmed';
       document.getElementById('sub').textContent =
-        "This link is missing what it needs to open the app. Try requesting it again.";
+        'Your email is verified. Open Surveillance AI and sign in to continue.';
       openBtn.style.display = 'none';
     } else {
-      openBtn.href = target;
-      window.location.href = target;
+      var target = null;
+      if (hashParams.get('access_token')) {
+        target = 'surveillanceai://reset-password#' + hash;
+      } else if (queryParams.get('linkId')) {
+        target = 'surveillanceai://guardian-confirm?linkId=' +
+          encodeURIComponent(queryParams.get('linkId'));
+      }
 
-      // If the app isn't installed, the scheme redirect silently does
-      // nothing and this page stays visible — there's no stable public
-      // install link yet (no Play Store listing; EAS's internal-
-      // distribution build URLs change on every rebuild), so this is a
-      // plain instruction rather than a link that would just go stale.
-      setTimeout(function () {
-        if (document.hidden) return; // app opened — page was backgrounded
+      if (!target) {
         document.getElementById('spinner').style.display = 'none';
-        document.getElementById('title').textContent = 'Install Surveillance AI first';
+        document.getElementById('title').textContent = 'Link unavailable';
         document.getElementById('sub').textContent =
-          'Install the app, then tap this link again from the email.';
+          "This link is missing what it needs to open the app. Try requesting it again.";
         openBtn.style.display = 'none';
-      }, 2000);
+      } else {
+        openBtn.href = target;
+        window.location.href = target;
+
+        // If the app isn't installed, the scheme redirect silently does
+        // nothing and this page stays visible — there's no stable public
+        // install link yet (no Play Store listing; EAS's internal-
+        // distribution build URLs change on every rebuild), so this is a
+        // plain instruction rather than a link that would just go stale.
+        setTimeout(function () {
+          if (document.hidden) return; // app opened — page was backgrounded
+          document.getElementById('spinner').style.display = 'none';
+          document.getElementById('title').textContent = 'Install Surveillance AI first';
+          document.getElementById('sub').textContent =
+            'Install the app, then tap this link again from the email.';
+          openBtn.style.display = 'none';
+        }, 2000);
+      }
     }
   </script>
 </body>
