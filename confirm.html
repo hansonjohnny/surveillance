@@ -38,18 +38,24 @@
     // (a user gesture on a link is far more likely to be allowed through
     // than an automatic window.location change).
     //
-    // Two source shapes land here:
-    //   - Supabase's own /auth/v1/verify redirect (password reset, and
-    //     the ward invite-to-set-password flow) — arrives as a hash
-    //     fragment: #access_token=...&refresh_token=...&type=...
+    // Three source shapes land here:
+    //   - Supabase's own /auth/v1/verify redirect for password reset and
+    //     the ward invite-to-set-password flow (type=recovery/invite) —
+    //     arrives as a hash fragment: #access_token=...&type=...
+    //   - The same /verify redirect for a brand-new signup's email
+    //     confirmation (type=signup) — same shape, different landing
+    //     screen, since there's no password to set here.
     //   - lib/guardian.ts's inviteWard confirmation email — arrives as a
     //     query param: ?linkId=...
     var hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
     var hashParams = new URLSearchParams(hash);
     var queryParams = new URLSearchParams(location.search);
+    var type = hashParams.get('type');
 
     var target = null;
-    if (hashParams.get('access_token')) {
+    if (hashParams.get('access_token') && type === 'signup') {
+      target = 'surveillanceai://email-confirmed#' + hash;
+    } else if (hashParams.get('access_token')) {
       target = 'surveillanceai://reset-password#' + hash;
     } else if (queryParams.get('linkId')) {
       target = 'surveillanceai://guardian-confirm?linkId=' +
