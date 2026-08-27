@@ -11,13 +11,21 @@
   .card { text-align:center; padding:32px; max-width:340px; margin:0 auto; padding-top:120px; }
   .card h1 { font-size:20px; margin:0 0 8px; }
   .card p { color:#8888A0; font-size:14px; line-height:1.5; margin:0 0 24px; }
-  .btn { display:inline-block; height:52px; line-height:52px; padding:0 28px;
+  .btn { display:inline-block; width:100%; height:52px; line-height:52px; padding:0 28px;
     border-radius:9999px; background:#00E5FF; color:#001F24; font-weight:600;
-    text-decoration:none; font-size:15px; }
+    text-decoration:none; font-size:15px; border:none; cursor:pointer; }
+  .btn:disabled { opacity:0.6; }
   .spinner { width:28px; height:28px; margin:0 auto 20px; border-radius:50%;
     border:3px solid rgba(0,229,255,0.2); border-top-color:#00E5FF;
     animation:spin 0.8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  .field { width:100%; height:52px; border-radius:12px; background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.10); color:#F0F0F5; font-size:15px;
+    padding:0 16px; margin-bottom:12px; text-align:left; }
+  .field:focus { outline:none; border-color:rgba(0,229,255,0.5); background:rgba(0,229,255,0.04); }
+  .error { color:#FF3D3D; font-size:13px; margin:-4px 0 12px; text-align:left; }
+  .form { text-align:left; }
+  .form h1, .form p { text-align:center; }
 </style>
 </head>
 <body>
@@ -26,17 +34,25 @@
     <h1 id="title">Opening Surveillance AI…</h1>
     <p id="sub">If the app doesn't open automatically, tap below.</p>
     <a class="btn" id="openBtn" href="#">Open in Surveillance AI</a>
+
+    <form class="form" id="passwordForm" style="display:none">
+      <input class="field" id="newPassword" type="password" placeholder="New password" autocomplete="new-password" />
+      <input class="field" id="confirmPassword" type="password" placeholder="Confirm new password" autocomplete="new-password" />
+      <div class="error" id="formError" style="display:none"></div>
+      <button class="btn" type="submit" id="submitBtn">Set Password</button>
+    </form>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script>
     // Served via GitHub Pages, not Supabase — this page exists only to
     // bridge an email link (which must be a real https URL Supabase's
     // redirect allowlist will accept) into the app's custom
-    // surveillanceai:// scheme. Some mail clients' in-app browsers won't
-    // auto-follow a script-triggered redirect to an unknown scheme, so
-    // this both attempts it automatically AND gives a real tappable link
-    // (a user gesture on a link is far more likely to be allowed through
-    // than an automatic window.location change).
+    // surveillanceai:// scheme, or handle the action directly on the
+    // page when the app isn't available. Some mail clients' in-app
+    // browsers won't auto-follow a script-triggered redirect to an
+    // unknown scheme either, so app hand-off always gets a real tappable
+    // link as backup.
     //
     // Three source shapes land here:
     //   - Supabase's own /auth/v1/verify redirect for password reset and
@@ -53,6 +69,19 @@
     var type = hashParams.get('type');
 
     var openBtn = document.getElementById('openBtn');
+    var spinner = document.getElementById('spinner');
+    var titleEl = document.getElementById('title');
+    var subEl = document.getElementById('sub');
+    var form = document.getElementById('passwordForm');
+    var formError = document.getElementById('formError');
+
+    function showMessage(title, sub) {
+      spinner.style.display = 'none';
+      titleEl.textContent = title;
+      subEl.textContent = sub;
+      openBtn.style.display = 'none';
+      form.style.display = 'none';
+    }
 
     // A signup confirmation's only job is verifying the email address —
     // that already happened server-side the moment this page loaded
@@ -63,44 +92,112 @@
     // (role, phone, contact info) completes automatically the next time
     // they sign in, wherever the app actually is.
     if (hashParams.get('access_token') && type === 'signup') {
-      document.getElementById('spinner').style.display = 'none';
-      document.getElementById('title').textContent = 'Email confirmed';
-      document.getElementById('sub').textContent =
-        'Your email is verified. Open Surveillance AI and sign in to continue.';
-      openBtn.style.display = 'none';
+      showMessage(
+        'Email confirmed',
+        'Your email is verified. Open Surveillance AI and sign in to continue.'
+      );
+    } else if (hashParams.get('access_token')) {
+      // Password reset (forgot-password) and the ward invite-to-set-
+      // password flow both land here — same operation either way:
+      // restore the session from the one-time tokens, then set a new
+      // password. Try the app first for the nicer themed experience
+      // when it's available; fall back to doing it right here on the
+      // page (via the Supabase JS client, same anon key already public
+      // in the app bundle) if it isn't — setting a password doesn't
+      // actually require the native app, only a valid session.
+      var accessToken = hashParams.get('access_token');
+      var refreshToken = hashParams.get('refresh_token') || '';
+      var target = 'surveillanceai://reset-password#' + hash;
+      openBtn.href = target;
+      window.location.href = target;
+
+      setTimeout(function () {
+        if (document.hidden) return; // app opened — page was backgrounded
+
+        var client = supabase.createClient(
+          'https://snhxbkmjqhelmjjpejme.supabase.co',
+          'sb_publishable_6gEL-bTUt37JfOD9ZMZN2w_-S5MHB-C'
+        );
+
+        client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+          .then(function (result) {
+            if (result.error) {
+              showMessage(
+                'Link Expired',
+                'This link has expired. Request a new one and try again.'
+              );
+              return;
+            }
+
+            spinner.style.display = 'none';
+            titleEl.textContent = 'Set Your Password';
+            subEl.textContent = 'Choose a password of at least 8 characters.';
+            openBtn.style.display = 'none';
+            form.style.display = 'block';
+
+            form.addEventListener('submit', function (e) {
+              e.preventDefault();
+              var pw = document.getElementById('newPassword').value;
+              var confirm = document.getElementById('confirmPassword').value;
+              formError.style.display = 'none';
+
+              if (pw.length < 8) {
+                formError.textContent = 'Password must be at least 8 characters.';
+                formError.style.display = 'block';
+                return;
+              }
+              if (pw !== confirm) {
+                formError.textContent = 'Passwords do not match.';
+                formError.style.display = 'block';
+                return;
+              }
+
+              var submitBtn = document.getElementById('submitBtn');
+              submitBtn.disabled = true;
+              submitBtn.textContent = 'Setting Password…';
+
+              client.auth.updateUser({ password: pw }).then(function (updateResult) {
+                if (updateResult.error) {
+                  submitBtn.disabled = false;
+                  submitBtn.textContent = 'Set Password';
+                  formError.textContent = 'Something went wrong. Please try again.';
+                  formError.style.display = 'block';
+                  return;
+                }
+                showMessage(
+                  'Password Set',
+                  'Open the Surveillance AI app and sign in with your new password.'
+                );
+              });
+            });
+          });
+      }, 2000);
+    } else if (queryParams.get('linkId')) {
+      // Confirming to be monitored requires being signed in as the
+      // specific ward the request was sent to — a real in-app action,
+      // not something a plain web form can safely stand in for.
+      var linkTarget = 'surveillanceai://guardian-confirm?linkId=' +
+        encodeURIComponent(queryParams.get('linkId'));
+      openBtn.href = linkTarget;
+      window.location.href = linkTarget;
+
+      // If the app isn't installed, the scheme redirect silently does
+      // nothing and this page stays visible — there's no stable public
+      // install link yet (no Play Store listing; EAS's internal-
+      // distribution build URLs change on every rebuild), so this is a
+      // plain instruction rather than a link that would just go stale.
+      setTimeout(function () {
+        if (document.hidden) return;
+        showMessage(
+          'Install Surveillance AI first',
+          'Install the app, then tap this link again from the email.'
+        );
+      }, 2000);
     } else {
-      var target = null;
-      if (hashParams.get('access_token')) {
-        target = 'surveillanceai://reset-password#' + hash;
-      } else if (queryParams.get('linkId')) {
-        target = 'surveillanceai://guardian-confirm?linkId=' +
-          encodeURIComponent(queryParams.get('linkId'));
-      }
-
-      if (!target) {
-        document.getElementById('spinner').style.display = 'none';
-        document.getElementById('title').textContent = 'Link unavailable';
-        document.getElementById('sub').textContent =
-          "This link is missing what it needs to open the app. Try requesting it again.";
-        openBtn.style.display = 'none';
-      } else {
-        openBtn.href = target;
-        window.location.href = target;
-
-        // If the app isn't installed, the scheme redirect silently does
-        // nothing and this page stays visible — there's no stable public
-        // install link yet (no Play Store listing; EAS's internal-
-        // distribution build URLs change on every rebuild), so this is a
-        // plain instruction rather than a link that would just go stale.
-        setTimeout(function () {
-          if (document.hidden) return; // app opened — page was backgrounded
-          document.getElementById('spinner').style.display = 'none';
-          document.getElementById('title').textContent = 'Install Surveillance AI first';
-          document.getElementById('sub').textContent =
-            'Install the app, then tap this link again from the email.';
-          openBtn.style.display = 'none';
-        }, 2000);
-      }
+      showMessage(
+        'Link unavailable',
+        "This link is missing what it needs to open the app. Try requesting it again."
+      );
     }
   </script>
 </body>
