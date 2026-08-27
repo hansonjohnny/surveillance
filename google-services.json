@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "801351104921",
+    "project_id": "surveillance-ai-60cc6",
+    "storage_bucket": "surveillance-ai-60cc6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:801351104921:android:150314fc4922e1cea3fb08",
+        "android_client_info": {
+          "package_name": "com.kwakuessi.surveillanceai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOmVjUsySgctHPY380GhP8mJlRsq3wDV4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

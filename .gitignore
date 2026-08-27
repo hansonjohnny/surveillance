@@ -43,9 +43,10 @@ example
 /ios
 /android
 
-# Firebase credentials
-google-services.json
-GoogleService-Info.plist
+# Firebase client config (google-services.json / GoogleService-Info.plist) is
+# intentionally NOT ignored — Google documents these as embedded client
+# config, not secrets, and EAS Build needs it checked in to include it in
+# the remote build archive.
 
 # Supabase CLI local session state (project ref, pooler URL, tool versions) —
 # regenerated per machine by `supabase link` / `supabase start`, not shared state.
