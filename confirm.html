@@ -67,6 +67,20 @@
     } else {
       openBtn.href = target;
       window.location.href = target;
+
+      // If the app isn't installed, the scheme redirect silently does
+      // nothing and this page stays visible — there's no stable public
+      // install link yet (no Play Store listing; EAS's internal-
+      // distribution build URLs change on every rebuild), so this is a
+      // plain instruction rather than a link that would just go stale.
+      setTimeout(function () {
+        if (document.hidden) return; // app opened — page was backgrounded
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('title').textContent = 'Install Surveillance AI first';
+        document.getElementById('sub').textContent =
+          'Install the app, then tap this link again from the email.';
+        openBtn.style.display = 'none';
+      }, 2000);
     }
   </script>
 </body>
