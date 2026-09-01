@@ -4,8 +4,10 @@
 
 import { useAlertStore } from "../store/useAlertStore";
 import { useOfflineQueueStore } from "../store/useOfflineQueueStore";
+import { useSessionStore } from "../store/useSessionStore";
 import type { Alert, Contact, Event, QueuedAlert } from "../types";
 import { generateUUID } from "./id";
+import { createShareLink } from "./liveShare";
 import { formatAddress } from "./location";
 import { isOnline } from "./network";
 import { logFunctionError, supabase } from "./supabase";
@@ -62,7 +64,7 @@ export async function makeCall(to: string, message: string): Promise<boolean> {
 
 // ─── Message builder ────────────────────────────────────────────────────────
 
-function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
+async function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
   const timestamp = new Date(event.timestamp).toLocaleString();
   const mapsLink = event.location
     ? `https://maps.google.com/?q=${event.location.lat},${event.location.lng}`
@@ -70,16 +72,35 @@ function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
   const humanAddress = event.location?.address
     ? formatAddress(event.location.address)
     : null;
-  const ackUrl = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/ack-alert?alertId=${alertId}`;
+  // Opening this page both shows the photo/audio GPT-4o/Whisper actually
+  // captured (not just a text summary) and, on that same visit, marks the
+  // alert acknowledged — see supabase/functions/ack-alert and alert.html
+  // (repo root, GitHub Pages — same reason as confirm.html/share.html:
+  // Supabase's shared domain rewrites text/html to text/plain).
+  const ackUrl = `https://hansonjohnny.github.io/surveillance/alert.html?alertId=${alertId}`;
+
+  // A live, continuously-updating position — distinct from mapsLink above,
+  // which is a fixed pin at wherever the ward was when this event fired.
+  // Only buildable while signed in with a real session; omitted otherwise
+  // rather than sending a broken link.
+  const { userId } = useSessionStore.getState();
+  const shareLink =
+    userId && event.sessionId
+      ? await createShareLink(event.sessionId, userId)
+      : null;
+  const liveLocationLine = shareLink
+    ? `Live location (updates automatically): ${shareLink.url}\n`
+    : "";
 
   // ── SMS ──────────────────────────────────────────────────────────────────
   const smsMessage =
     `SAFETY ALERT: ${contact.name} may need help.\n` +
     (humanAddress ? `Address: ${humanAddress}\n` : "") +
-    `Map: ${mapsLink}\n` +
+    `Event location: ${mapsLink}\n` +
+    liveLocationLine +
     `AI detected: ${event.aiSummary}\n` +
     `Time: ${timestamp}\n` +
-    `Seen this? Tap to confirm: ${ackUrl}`;
+    `See photo/audio & confirm: ${ackUrl}`;
 
   // ── Email ─────────────────────────────────────────────────────────────────
   const emailSubject = `Safety Alert - ${contact.name} may need help`;
@@ -98,7 +119,8 @@ function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
     (event.location
       ? `Coordinates: ${event.location.lat}, ${event.location.lng}\n`
       : "") +
-    `Map: ${mapsLink}\n` +
+    `Event location (fixed pin): ${mapsLink}\n` +
+    liveLocationLine +
     (event.location?.address?.name
       ? `Name: ${event.location.address.name}\n`
       : "") +
@@ -130,8 +152,8 @@ function buildAlertMessages(event: Event, contact: Contact, alertId: string) {
     `\nTRIGGER\n` +
     `-------\n` +
     `Source: ${event.source ?? "AI analysis"}\n\n` +
-    `Acknowledge this alert: ${ackUrl}\n` +
-    `(If we don't hear from you within 10 minutes, we'll also notify the backup contact.)\n\n` +
+    `See the photo/audio that triggered this and confirm you've seen it: ${ackUrl}\n` +
+    `(Opening that link is the confirmation — if we don't hear from you within 10 minutes, we'll also notify the backup contact.)\n\n` +
     `${"=".repeat(40)}\n` +
     `This alert was generated automatically by Surveillance AI.\n` +
     `If this is a false alarm, please contact ${contact.name} directly.`;
@@ -159,7 +181,7 @@ async function sendAlertChannels(
   alertId: string,
 ): Promise<{ smsSent: boolean; emailSent: boolean; callMade: boolean }> {
   const { smsMessage, emailSubject, emailBody, callMessage } =
-    buildAlertMessages(event, contact, alertId);
+    await buildAlertMessages(event, contact, alertId);
 
   const channelPromises: Promise<boolean>[] = [
     sendSMS(contact.phone, smsMessage),

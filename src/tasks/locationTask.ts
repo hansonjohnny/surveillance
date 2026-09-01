@@ -15,6 +15,7 @@ import type * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import {
   LOCATION_TASK_NAME,
+  maybePushLocationPing,
   updateLocalSessionLocation,
 } from "../lib/location";
 
@@ -29,12 +30,14 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   const latest = locations?.[locations.length - 1];
   if (!latest) return;
 
+  const { latitude: lat, longitude: lng } = latest.coords;
+
   try {
-    await updateLocalSessionLocation(
-      latest.coords.latitude,
-      latest.coords.longitude,
-    );
+    const session = await updateLocalSessionLocation(lat, lng);
+    if (session?.userId && session.sessionId) {
+      await maybePushLocationPing(session.userId, session.sessionId, lat, lng);
+    }
   } catch (err) {
-    console.error("[location task] updateLocalSessionLocation failed:", err);
+    console.error("[location task] update failed:", err);
   }
 });

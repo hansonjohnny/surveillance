@@ -10,6 +10,7 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import { supabase } from "./supabase";
 
 // ─── Startup handler ──────────────────────────────────────────────────────────
 
@@ -68,6 +69,23 @@ export async function registerForPushNotifications(): Promise<string | null> {
         Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
       const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
       await AsyncStorage.setItem("pushToken", token);
+
+      // Persisted server-side so a guardian can remotely start monitoring
+      // on this device later (supabase/functions/remote-start-session) —
+      // previously fetched and immediately discarded.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase
+          .from("users")
+          .update({ push_token: token })
+          .eq("id", user.id);
+        if (error) {
+          console.error("[notifications] Failed to save push token:", error.message);
+        }
+      }
+
       return token;
     } catch {
       console.warn(

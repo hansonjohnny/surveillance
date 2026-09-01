@@ -84,12 +84,18 @@ Use the following stack:
 - Expo Keep Awake for preventing screen sleep during active sessions
 - Expo SMS for opening the SMS composer as a fallback
 - react-native-webview for rendering the Live map
-- Leaflet (via WebView, loaded from unpkg CDN) for the GPS map on the
-  Live screen — uses CartoDB Dark Matter tiles, no API key required.
+- A self-contained WebView-based map (no external map library) for the
+  GPS map on the Live screen — uses MapTiler's `dataviz-dark` /
+  `dataviz` raster tiles, which require an API key
+  (`EXPO_PUBLIC_MAPTILER_API_KEY` in `.env`, also set in EAS's env vars
+  for cloud builds). CartoDB's free anonymous basemap tiles were used
+  originally but CartoDB has since started requiring a paid/data-linked
+  API token for that endpoint, so the app switched providers.
   Do NOT use react-native-maps. The map is implemented in
-  LiveMap.tsx using a WebView that loads a self-contained Leaflet HTML
-  page. Location updates are pushed into the WebView using
-  injectJavaScript so the map pans without a full reload.
+  LiveMap.tsx using a WebView that loads a self-contained HTML page
+  with a hand-rolled tile renderer. Location updates are pushed into
+  the WebView using injectJavaScript so the map pans without a full
+  reload.
 
 Do not introduce new major libraries unless there is a strong reason.
 

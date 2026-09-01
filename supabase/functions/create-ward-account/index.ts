@@ -61,12 +61,42 @@ Deno.serve(async (req) => {
     return json({ success: false, error: "Not signed in." }, 401);
   }
 
+  // A ward account cannot itself act as a guardian -- mirrors the RLS
+  // check in guardian_links' insert policy (migration 012), repeated
+  // here since the service-role client bypasses RLS.
+  const { data: existingWardLink } = await db
+    .from("guardian_links")
+    .select("id")
+    .eq("ward_id", guardian.id)
+    .in("status", ["pending", "active"])
+    .limit(1)
+    .maybeSingle();
+
+  if (existingWardLink) {
+    return json(
+      { success: false, error: "An account currently being monitored can't monitor others." },
+      403,
+    );
+  }
+
   try {
-    const { email } = await req.json();
+    const { email, backupName, backupPhone, backupEmail } = await req.json();
     const trimmed = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const backup = {
+      name: typeof backupName === "string" ? backupName.trim() : "",
+      phone: typeof backupPhone === "string" ? backupPhone.trim() : "",
+      email: typeof backupEmail === "string" ? backupEmail.trim().toLowerCase() : "",
+    };
 
     if (!trimmed) {
       return json({ success: false, error: "Email is required." }, 400);
+    }
+
+    if (!backup.name || !backup.phone || !backup.email) {
+      return json(
+        { success: false, error: "Backup contact name, phone, and email are all required." },
+        400,
+      );
     }
 
     if (trimmed === guardian.email?.toLowerCase()) {
@@ -128,6 +158,35 @@ Deno.serve(async (req) => {
       console.error("[create-ward-account] guardian_links insert failed:", linkError);
       return json(
         { success: false, error: "Account created, but linking it failed. Please try linking it manually." },
+        500,
+      );
+    }
+
+    // Nothing for the ward to configure for SOS to work -- the
+    // guardian's own stored name/phone/email becomes the ward's primary
+    // contact, and the backup contact entered above becomes the
+    // secondary. Synced down to the ward's device on first sign-in via
+    // useOnboardingStore's hydrateFromSupabase.
+    const { data: guardianRow } = await db
+      .from("users")
+      .select("phone")
+      .eq("id", guardian.id)
+      .single();
+
+    const { error: contactError } = await db.from("contacts").insert({
+      user_id: data.user.id,
+      name: guardian.user_metadata?.full_name ?? guardian.email ?? "",
+      phone: guardianRow?.phone ?? "",
+      email: guardian.email ?? "",
+      backup_name: backup.name,
+      backup_phone: backup.phone,
+      backup_email: backup.email,
+    });
+
+    if (contactError) {
+      console.error("[create-ward-account] contacts insert failed:", contactError);
+      return json(
+        { success: false, error: "Account created, but setting up contacts failed. Please try again from the dashboard." },
         500,
       );
     }

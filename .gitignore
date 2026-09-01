@@ -48,6 +48,11 @@ example
 # config, not secrets, and EAS Build needs it checked in to include it in
 # the remote build archive.
 
+# Firebase Admin SDK service account keys ARE real secrets (grant admin
+# access to the Firebase project) -- never commit these. Only EAS needs a
+# copy, uploaded once via `eas credentials`, not the repo.
+*firebase-adminsdk*.json
+
 # Supabase CLI local session state (project ref, pooler URL, tool versions) —
 # regenerated per machine by `supabase link` / `supabase start`, not shared state.
 supabase/.temp/

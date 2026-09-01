@@ -57,7 +57,7 @@ import {
   Sensitivity,
   ShakeSensitivityPicker,
 } from '../../components/ui/ShakeSensitivityPicker';
-import { cancelWellnessCheckIn, scheduleWellnessCheckIn } from '../../lib/wellness';
+import { cancelWellnessCheckIn, scheduleWellnessCheckIn, parseTimeInput, formatTime12h } from '../../lib/wellness';
 import { supabase } from '../../lib/supabase';
 import { PLANS, capLabel, capPercent, type Plan } from '../../lib/plans';
 import { useAlertStore } from '../../store/useAlertStore';
@@ -75,36 +75,6 @@ const DISPLAY_NAME_KEY = 'profile_display_name';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseTimeInput(input: string): string | null {
-  const s = input.trim();
-  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
-  if (m24) {
-    const h = parseInt(m24[1], 10);
-    const m = parseInt(m24[2], 10);
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59)
-      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-  const m12 = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
-  if (m12) {
-    let h = parseInt(m12[1], 10);
-    const m = m12[2] ? parseInt(m12[2], 10) : 0;
-    const ampm = m12[3].toLowerCase();
-    if (h === 12) h = ampm === 'am' ? 0 : 12;
-    else if (ampm === 'pm') h += 12;
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59)
-      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-  return null;
-}
-
-function formatTime12h(time24: string): string {
-  const [hourStr, minuteStr] = time24.split(':');
-  const h = parseInt(hourStr, 10);
-  const m = parseInt(minuteStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 || 12;
-  return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
-}
 
 function endOfDay(date: Date): Date {
   const d = new Date(date);
@@ -574,6 +544,7 @@ function EditContactModal({
   email,
   onSave,
   onClose,
+  readOnly = false,
 }: {
   visible: boolean;
   title?: string;
@@ -582,6 +553,7 @@ function EditContactModal({
   email: string;
   onSave: (name: string, phone: string, email: string) => void;
   onClose: () => void;
+  readOnly?: boolean;
 }) {
   const [draftName, setDraftName] = useState(name);
   const [draftPhone, setDraftPhone] = useState(phone);
@@ -609,18 +581,24 @@ function EditContactModal({
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, gap: 16, paddingBottom: 8 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View>
           <FieldLabel label="Full Name" />
-          <StyledInput value={draftName} onChangeText={setDraftName} placeholder="e.g. Jane Smith" autoCapitalize="words" />
+          <StyledInput value={draftName} onChangeText={setDraftName} placeholder="e.g. Jane Smith" autoCapitalize="words" editable={!readOnly} />
         </View>
         <View>
           <FieldLabel label="Phone Number" />
-          <StyledInput value={draftPhone} onChangeText={setDraftPhone} placeholder="+1 555 012 3456" keyboardType="phone-pad" />
+          <StyledInput value={draftPhone} onChangeText={setDraftPhone} placeholder="+1 555 012 3456" keyboardType="phone-pad" editable={!readOnly} />
           <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#555568', marginTop: 5, marginLeft: 2 }}>Include country code, e.g. +1 or +44</Text>
         </View>
         <View>
           <FieldLabel label="Email Address" />
-          <StyledInput value={draftEmail} onChangeText={setDraftEmail} placeholder="jane@example.com" keyboardType="email-address" autoCapitalize="none" />
+          <StyledInput value={draftEmail} onChangeText={setDraftEmail} placeholder="jane@example.com" keyboardType="email-address" autoCapitalize="none" editable={!readOnly} />
         </View>
-        <CyanButton label="Save Contact" onPress={handleSave} style={{ marginTop: 8 }} />
+        {readOnly ? (
+          <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#8888A0', textAlign: 'center', marginTop: 4 }}>
+            Set by your guardian — contact them to make changes.
+          </Text>
+        ) : (
+          <CyanButton label="Save Contact" onPress={handleSave} style={{ marginTop: 8 }} />
+        )}
       </ScrollView>
     </Sheet>
   );
@@ -635,6 +613,7 @@ function MonitoringModal({
   onIntervalChange,
   onSensitivityChange,
   onClose,
+  readOnly = false,
 }: {
   visible: boolean;
   interval: Interval;
@@ -642,15 +621,21 @@ function MonitoringModal({
   onIntervalChange: (v: Interval) => void;
   onSensitivityChange: (v: Sensitivity) => void;
   onClose: () => void;
+  readOnly?: boolean;
 }) {
   return (
     <Sheet visible={visible} onClose={onClose} title="Monitoring">
       <View style={{ paddingHorizontal: 24, gap: 24, paddingBottom: 8 }}>
+        {readOnly && (
+          <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, lineHeight: 18, color: '#8888A0', paddingHorizontal: 4 }}>
+            Your guardian controls these settings.
+          </Text>
+        )}
         <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-          <MonitoringIntervalPicker value={interval} onChange={onIntervalChange} />
+          <MonitoringIntervalPicker value={interval} onChange={onIntervalChange} disabled={readOnly} />
         </View>
         <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-          <ShakeSensitivityPicker value={sensitivity} onChange={onSensitivityChange} />
+          <ShakeSensitivityPicker value={sensitivity} onChange={onSensitivityChange} disabled={readOnly} />
         </View>
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, lineHeight: 18, color: '#555568', paddingHorizontal: 4 }}>
           Location and audio monitoring continue while the app is in the background or your screen is locked. Camera snapshots pause in the background (an iOS/Android restriction) and resume automatically when you reopen the app.
@@ -677,6 +662,7 @@ function BehaviourModal({
   onWellnessTimeChange,
   onWellnessTimeSubmit,
   onClose,
+  wellnessReadOnly = false,
 }: {
   visible: boolean;
   stealthMode: boolean;
@@ -691,6 +677,7 @@ function BehaviourModal({
   onWellnessTimeChange: (v: string) => void;
   onWellnessTimeSubmit: () => void;
   onClose: () => void;
+  wellnessReadOnly?: boolean;
 }) {
   return (
     <Sheet visible={visible} onClose={onClose} title="Behaviour">
@@ -728,7 +715,12 @@ function BehaviourModal({
         </View>
 
         {/* Wellness Check-In */}
-        <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: wellnessEnabled ? `${CYAN}33` : 'rgba(255,255,255,0.08)' }}>
+        <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: wellnessEnabled ? `${CYAN}33` : 'rgba(255,255,255,0.08)', opacity: wellnessReadOnly ? 0.6 : 1 }}>
+          {wellnessReadOnly && (
+            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, color: '#8888A0', marginBottom: 12 }}>
+              Your guardian controls this.
+            </Text>
+          )}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: wellnessEnabled ? 16 : 0 }}>
             <View style={{ flex: 1, paddingRight: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -744,12 +736,13 @@ function BehaviourModal({
             <Switch
               value={wellnessEnabled}
               onValueChange={onWellnessToggle}
+              disabled={wellnessReadOnly}
               trackColor={{ false: 'rgba(255,255,255,0.10)', true: `${CYAN}55` }}
               thumbColor={wellnessEnabled ? CYAN : colors.text.tertiary}
               ios_backgroundColor="rgba(255,255,255,0.10)"
             />
           </View>
-          {wellnessEnabled && (
+          {wellnessEnabled && !wellnessReadOnly && (
             <View>
               <FieldLabel label="Check-In Time" />
               <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -1133,6 +1126,7 @@ export default function SettingsScreen() {
 
   const plan        = useSettingsStore((s) => s.plan);
   const todayUsage  = useSettingsStore((s) => s.todayUsage);
+  const isWard      = useSettingsStore((s) => s.isWard);
   const planConfig  = PLANS[plan];
 
   const storedInterval      = useSettingsStore((s) => s.monitoringInterval);
@@ -1372,7 +1366,7 @@ export default function SettingsScreen() {
               await AsyncStorage.clear();
               await SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self' });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1417,7 +1411,7 @@ export default function SettingsScreen() {
                 SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY),
               ]);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self' });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1549,18 +1543,6 @@ export default function SettingsScreen() {
               )}
             </View>
 
-            {/* Upgrade button — hidden on guardian */}
-            {plan !== 'guardian' && (
-              <TouchableOpacity
-                onPress={() => router.push('/upgrade')}
-                activeOpacity={0.8}
-                style={{ height: 44, borderRadius: 9999, backgroundColor: CYAN, alignItems: 'center', justifyContent: 'center', marginTop: 4, shadowColor: CYAN, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.3, shadowRadius: 12 }}
-              >
-                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: 14, color: '#0A0A0F' }}>
-                  {plan === 'free' ? 'Upgrade to Pro' : 'Upgrade to Guardian'}
-                </Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 
@@ -1580,12 +1562,14 @@ export default function SettingsScreen() {
               value={storedBackupName || 'Escalates after 10 min'}
               onPress={() => setBackupContactModalOpen(true)}
             />
-            <MenuRow
-              icon={<Users size={18} color={CYAN} strokeWidth={1.5} />}
-              label="Guardian"
-              value="Monitor a linked ward"
-              onPress={() => router.push('/guardian')}
-            />
+            {!isWard && (
+              <MenuRow
+                icon={<Users size={18} color={CYAN} strokeWidth={1.5} />}
+                label="Guardian"
+                value="Monitor a linked ward"
+                onPress={() => router.push('/guardian')}
+              />
+            )}
             <MenuRow
               icon={<Vibrate size={18} color={CYAN} strokeWidth={1.5} />}
               label="Monitoring"
@@ -1606,14 +1590,16 @@ export default function SettingsScreen() {
         <SectionLabel label="Data" />
         <View style={{ marginBottom: 28 }}>
           <MenuGroup>
-            <MenuRow
-              icon={<CalendarClock size={18} color="#8888A0" strokeWidth={1.5} />}
-              label="Event Log"
-              value={logClearEnabled && storedLogClearScheduledAt
-                ? `Clears ${new Date(storedLogClearScheduledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
-                : 'Auto-clear'}
-              onPress={() => setEventLogModalOpen(true)}
-            />
+            {!isWard && (
+              <MenuRow
+                icon={<CalendarClock size={18} color="#8888A0" strokeWidth={1.5} />}
+                label="Event Log"
+                value={logClearEnabled && storedLogClearScheduledAt
+                  ? `Clears ${new Date(storedLogClearScheduledAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                  : 'Auto-clear'}
+                onPress={() => setEventLogModalOpen(true)}
+              />
+            )}
             <MenuRow
               icon={<MapPin size={18} color={perms.gps === 'always' ? colors.risk.low : perms.gps === 'foreground' ? colors.risk.medium : colors.risk.high} strokeWidth={1.5} />}
               label="Permissions"
@@ -1696,6 +1682,7 @@ export default function SettingsScreen() {
         email={storedContactEmail}
         onSave={handleSaveContact}
         onClose={() => setContactModalOpen(false)}
+        readOnly={isWard}
       />
       <EditContactModal
         visible={backupContactModalOpen}
@@ -1705,6 +1692,7 @@ export default function SettingsScreen() {
         email={storedBackupEmail}
         onSave={handleSaveBackupContact}
         onClose={() => setBackupContactModalOpen(false)}
+        readOnly={isWard}
       />
       <MonitoringModal
         visible={monitoringModalOpen}
@@ -1713,6 +1701,7 @@ export default function SettingsScreen() {
         onIntervalChange={handleIntervalChange}
         onSensitivityChange={handleSensitivityChange}
         onClose={() => setMonitoringModalOpen(false)}
+        readOnly={isWard}
       />
       <BehaviourModal
         visible={behaviourModalOpen}
@@ -1728,6 +1717,7 @@ export default function SettingsScreen() {
         onWellnessTimeChange={(v) => { setWellnessTimeInput(v); setWellnessTimeError(false); }}
         onWellnessTimeSubmit={handleWellnessTimeSubmit}
         onClose={() => setBehaviourModalOpen(false)}
+        wellnessReadOnly={isWard}
       />
       <EventLogModal
         visible={eventLogModalOpen}

@@ -29,11 +29,13 @@ export function ShakeSensitivityPicker({
   onChange,
   showDescription = false,
   hideHeader = false,
+  disabled = false,
 }: {
   value: Sensitivity;
   onChange: (v: Sensitivity) => void;
   showDescription?: boolean;
   hideHeader?: boolean;
+  disabled?: boolean;
 }) {
   const [trackWidth, setTrackWidth] = useState(0);
   const dotX = useSharedValue(0);
@@ -56,13 +58,13 @@ export function ShakeSensitivityPicker({
   }));
 
   function handleTrackPress(e: any) {
-    if (trackWidth <= 0) return;
+    if (disabled || trackWidth <= 0) return;
     const ratio = e.nativeEvent.locationX / trackWidth;
     onChange(Math.min(2, Math.max(0, Math.round(ratio * 2))) as Sensitivity);
   }
 
   return (
-    <View>
+    <View style={{ opacity: disabled ? 0.5 : 1 }}>
       {/* Header: label + current value badge */}
       {!hideHeader && (
         <View className="flex-row justify-between items-center mb-4">
@@ -123,6 +125,7 @@ export function ShakeSensitivityPicker({
             <Pressable
               key={label}
               onPress={() => onChange(idx as Sensitivity)}
+              disabled={disabled}
               className={`flex-1 h-11 items-center justify-center rounded-sm border ${
                 active
                   ? 'border-accent bg-accent/[0.08]'

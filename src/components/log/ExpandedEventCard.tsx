@@ -1,7 +1,9 @@
 import type { Event, RiskLevel } from '@/types'
+import { getSignedMediaUrl } from '@/lib/storage'
 import { Image, Linking, Text, TouchableOpacity, View } from 'react-native'
 import { ChevronUp, MapPin, Pause, Play } from 'lucide-react-native'
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio'
+import { useEffect, useState } from 'react'
 
 // ─── Risk config ──────────────────────────────────────────────────────────────
 const RISK: Record<RiskLevel, { color: string; bg: string; border: string; label: string }> = {
@@ -42,6 +44,55 @@ function SectionLabel({ text }: { text: string }) {
     >
       {text}
     </Text>
+  )
+}
+
+// ─── Confidence pill ──────────────────────────────────────────────────────────
+function ConfidencePill({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100)
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-start',
+        marginTop: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 9999,
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.10)',
+      }}
+    >
+      <Text style={{ fontFamily: 'JetBrainsMono_400Regular', fontSize: 11, color: '#8888A0' }}>
+        {pct}% confidence
+      </Text>
+    </View>
+  )
+}
+
+// ─── Concerns list ────────────────────────────────────────────────────────────
+function ConcernsList({ concerns }: { concerns: string[] }) {
+  return (
+    <View style={{ marginTop: 10, gap: 6 }}>
+      {concerns.map((c, i) => (
+        <View key={i} style={{ flexDirection: 'row', gap: 8 }}>
+          <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 13, color: '#FFD740' }}>
+            •
+          </Text>
+          <Text
+            style={{
+              flex: 1,
+              fontFamily: 'DMSans_400Regular',
+              fontSize: 13,
+              lineHeight: 20,
+              color: '#8888A0',
+            }}
+          >
+            {c}
+          </Text>
+        </View>
+      ))}
+    </View>
   )
 }
 
@@ -115,6 +166,30 @@ type Props = {
 export function ExpandedEventCard({ event, onCollapse }: Props) {
   const r = RISK[event.riskLevel]
 
+  // event.photoUri/audioUri are the ward's own local file:// paths,
+  // directly renderable. On a guardian's device those are always null —
+  // photoStoragePath/audioStoragePath (set only for a Medium/High event,
+  // see lib/monitoring.ts) point at the real thing in Storage instead,
+  // resolved here to a short-lived signed URL on demand, only when this
+  // card is actually expanded.
+  const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | null>(null)
+  const [signedAudioUrl, setSignedAudioUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!event.photoUri && event.photoStoragePath) {
+      getSignedMediaUrl(event.photoStoragePath).then(setSignedPhotoUrl)
+    }
+  }, [event.photoUri, event.photoStoragePath])
+
+  useEffect(() => {
+    if (!event.audioUri && event.audioStoragePath) {
+      getSignedMediaUrl(event.audioStoragePath).then(setSignedAudioUrl)
+    }
+  }, [event.audioUri, event.audioStoragePath])
+
+  const photoUrl = event.photoUri ?? signedPhotoUrl
+  const audioUrl = event.audioUri ?? signedAudioUrl
+
   return (
     <View
       style={{
@@ -144,9 +219,9 @@ export function ExpandedEventCard({ event, onCollapse }: Props) {
       />
 
       {/* Full-width photo */}
-      {event.photoUri ? (
+      {photoUrl ? (
         <Image
-          source={{ uri: event.photoUri }}
+          source={{ uri: photoUrl }}
           style={{ width: '100%', height: 200, borderRadius: 12 }}
           resizeMode="cover"
         />
@@ -197,6 +272,10 @@ export function ExpandedEventCard({ event, onCollapse }: Props) {
         >
           {event.aiSummary}
         </Text>
+        {event.concerns?.length ? <ConcernsList concerns={event.concerns} /> : null}
+        {typeof event.confidence === 'number' ? (
+          <ConfidencePill confidence={event.confidence} />
+        ) : null}
 
         {/* Audio Analysis */}
         {event.audioSummary || event.transcript !== undefined ? (
@@ -213,14 +292,20 @@ export function ExpandedEventCard({ event, onCollapse }: Props) {
             >
               {event.audioSummary ?? (event.transcript === null ? 'No audio recorded this cycle.' : 'Analysing audio...')}
             </Text>
+            {event.audioConcerns?.length ? (
+              <ConcernsList concerns={event.audioConcerns} />
+            ) : null}
+            {typeof event.audioConfidence === 'number' ? (
+              <ConfidencePill confidence={event.audioConfidence} />
+            ) : null}
           </>
         ) : null}
 
         {/* Audio clip playback */}
-        {event.audioUri ? (
+        {audioUrl ? (
           <>
             <SectionLabel text="Audio Clip" />
-            <AudioClipPlayer uri={event.audioUri} />
+            <AudioClipPlayer uri={audioUrl} />
           </>
         ) : null}
 

@@ -45,7 +45,7 @@ import { Stack, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import "../../global.css";
 import { PendingAlertBanner } from "../components/alerts/PendingAlertBanner";
 import { checkEscalations } from "../lib/escalation";
@@ -73,8 +73,12 @@ import {
 import "../tasks/wellnessTask";
 import "../tasks/escalationTask";
 import "../tasks/locationTask";
+import "../tasks/remoteSessionTask";
 import { registerWellnessTask } from "../tasks/wellnessTask";
 import { registerEscalationTask } from "../tasks/escalationTask";
+import { registerRemoteSessionTask } from "../tasks/remoteSessionTask";
+import { maybeRunMediaCleanup } from "../lib/storage";
+import { syncSettingsFromSupabase } from "../lib/settingsSync";
 import { colors } from "../theme/colors";
 
 SplashScreen.preventAutoHideAsync().catch(console.warn);
@@ -139,12 +143,15 @@ export default function RootLayout() {
   // to /(auth)/reset-password in the routing effect below.
   const [pendingReset, setPendingReset] = useState<ResetTokens | null>(null);
 
-  // A guardian-confirm deep link's linkId, if one arrived — set to
-  // non-null to trigger routing to /guardian-confirm in the routing
-  // effect below, same pattern as pendingReset.
-  const [pendingGuardianConfirm, setPendingGuardianConfirm] = useState<
-    string | null
-  >(null);
+  // A guardian-confirm deep link's linkId, if one arrived — non-null
+  // triggers routing to /guardian-confirm in the routing effect below,
+  // same pattern as pendingReset. Lives in useSettingsStore (not local
+  // state) so guardian-confirm.tsx can also set it when the person needs
+  // to sign in first — the routing effect below picks it up the moment
+  // isAuthenticated flips true, regardless of which path set it.
+  const pendingGuardianConfirm = useSettingsStore(
+    (s) => s.pendingGuardianConfirmLinkId,
+  );
 
   // Prevents the routing effect from re-running on token refreshes while
   // the user is mid-onboarding, which caused the contact screen to glitch.
@@ -221,6 +228,7 @@ export default function RootLayout() {
         useSettingsStore.getState().setPlan("free");
         useSettingsStore.getState().setTodayUsage(0);
         useSettingsStore.getState().setRole("self");
+        useSettingsStore.getState().setIsWard(false);
 
         // Sync plan + role from DB to local store so the monitoring cycle
         // and post-onboarding routing use the correct values even after a
@@ -233,6 +241,20 @@ export default function RootLayout() {
           .then(({ data }) => {
             if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
             if (data?.role) useSettingsStore.getState().setRole(data.role);
+          })
+          .catch(console.warn);
+
+        // Sync isWard too — a separate table, so a separate query.
+        // Determines whether the Guardian menu row in Settings should be
+        // shown; see migration 012.
+        supabase
+          .from("guardian_links")
+          .select("id")
+          .eq("ward_id", s.user.id)
+          .in("status", ["pending", "active"])
+          .limit(1)
+          .then(({ data }) => {
+            useSettingsStore.getState().setIsWard((data?.length ?? 0) > 0);
           })
           .catch(console.warn);
       }
@@ -251,12 +273,25 @@ export default function RootLayout() {
           .hydrateFromSupabase(s.user.id)
           .catch(console.warn);
 
+        // Picks up a guardian's remotely-set monitoring interval/shake
+        // sensitivity (see lib/settingsSync.ts) — harmless round-trip for
+        // a non-linked user, since it just re-syncs their own values.
+        syncSettingsFromSupabase(s.user.id).catch(console.warn);
+
         if (!useSettingsStore.getState().onboardingComplete) {
           useSettingsStore.getState().markOnboardingComplete();
         }
-      } else if (!useSettingsStore.getState().onboardingComplete) {
+
+        // Opportunistic, at-most-once-a-day retention sweep for old event
+        // media (see supabase/functions/cleanup-old-media) — any signed-in
+        // user can trigger it, it's a global sweep, not scoped to them.
+        maybeRunMediaCleanup().catch(console.warn);
+      } else if (Platform.OS !== "web" && !useSettingsStore.getState().onboardingComplete) {
         // No session — fall back to Secure Store (handles iOS reinstall and
-        // the gap between session expiry and next sign-in).
+        // the gap between session expiry and next sign-in). SecureStore has
+        // no real implementation on web (its web module is an empty stub —
+        // calling it throws) and the "reinstall" concept this recovers from
+        // doesn't apply to a web visitor anyway, so skip entirely there.
         const stored = await SecureStore.getItemAsync(ONBOARDING_SECURE_KEY);
         if (stored === "true") {
           useSettingsStore.getState().markOnboardingComplete();
@@ -271,7 +306,11 @@ export default function RootLayout() {
         const tokens = parseResetUrl(initialUrl);
         if (tokens) setPendingReset(tokens);
         const linkId = parseGuardianConfirmUrl(initialUrl);
-        if (linkId) setPendingGuardianConfirm(linkId);
+        if (linkId) {
+          useSettingsStore.getState().updateSettings({
+            pendingGuardianConfirmLinkId: linkId,
+          });
+        }
       }
 
       // Register the wellness notification category and background task.
@@ -279,6 +318,7 @@ export default function RootLayout() {
       registerWellnessCategory().catch(console.warn);
       registerWellnessTask().catch(console.warn);
       registerEscalationTask().catch(console.warn);
+      registerRemoteSessionTask().catch(console.warn);
 
       setSession(s);
       setReady(true);
@@ -317,6 +357,7 @@ export default function RootLayout() {
           useSettingsStore.getState().setPlan("free");
           useSettingsStore.getState().setTodayUsage(0);
           useSettingsStore.getState().setRole("self");
+          useSettingsStore.getState().setIsWard(false);
 
           // Re-sync plan + role on every sign-in so the local store always
           // matches what's in the database.
@@ -328,6 +369,17 @@ export default function RootLayout() {
             .then(({ data }) => {
               if (data?.plan) useSettingsStore.getState().setPlan(data.plan);
               if (data?.role) useSettingsStore.getState().setRole(data.role);
+            })
+            .catch(console.warn);
+
+          supabase
+            .from("guardian_links")
+            .select("id")
+            .eq("ward_id", newSession.user.id)
+            .in("status", ["pending", "active"])
+            .limit(1)
+            .then(({ data }) => {
+              useSettingsStore.getState().setIsWard((data?.length ?? 0) > 0);
             })
             .catch(console.warn);
         }
@@ -351,7 +403,11 @@ export default function RootLayout() {
       const tokens = parseResetUrl(event.url);
       if (tokens) setPendingReset(tokens);
       const linkId = parseGuardianConfirmUrl(event.url);
-      if (linkId) setPendingGuardianConfirm(linkId);
+      if (linkId) {
+        useSettingsStore.getState().updateSettings({
+          pendingGuardianConfirmLinkId: linkId,
+        });
+      }
     });
 
     return () => sub.remove();
@@ -414,6 +470,23 @@ export default function RootLayout() {
 
     SplashScreen.hideAsync().catch(console.warn);
 
+    // Web is a guardian-only companion dashboard for an existing account —
+    // not a place to run the ward-oriented landing/onboarding flow (camera/
+    // location permission screens, "Start Surveillance" preview, etc. make
+    // no sense in a browser, and a ward account has no reason to be here at
+    // all). Kept fully separate from the native routing logic below rather
+    // than threaded through it, so this can never affect native's
+    // onboarding-resume/deep-link handling.
+    if (Platform.OS === "web") {
+      if (hasInitialRouted.current) {
+        if (!isAuthenticated) router.replace("/(auth)/sign-in");
+        return;
+      }
+      hasInitialRouted.current = true;
+      router.replace(isAuthenticated ? "/guardian" : "/(auth)/sign-in");
+      return;
+    }
+
     // A pending reset deep link always takes priority.
     if (pendingReset) {
       router.replace({
@@ -432,7 +505,9 @@ export default function RootLayout() {
         pathname: "/guardian-confirm",
         params: { linkId: pendingGuardianConfirm },
       });
-      setPendingGuardianConfirm(null);
+      useSettingsStore.getState().updateSettings({
+        pendingGuardianConfirmLinkId: null,
+      });
       return;
     }
 

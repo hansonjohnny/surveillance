@@ -216,7 +216,7 @@ export default function IndexScreen() {
         <View className="px-5 pt-3 pb-2 items-center">
           {/* Get Started button */}
           <ContinueButton
-            onPress={() => router.push("/(onboarding)/when")}
+            onPress={() => router.push("/(onboarding)/account-type")}
             label="GET STARTED"
           />
 

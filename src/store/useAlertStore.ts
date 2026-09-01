@@ -2,6 +2,7 @@ import type { Alert, Event } from "@/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { NO_ANALYSIS_SUMMARY } from "../lib/eventContent";
 import { supabase } from "../lib/supabase";
 import { useSessionStore } from "./useSessionStore";
 
@@ -68,6 +69,22 @@ export const useAlertStore = create<AlertStore>()(
         const event = get().events.find((e) => e.id === eventId);
         if (!event) return true; // event was cleared locally — nothing to sync
 
+        // A genuine vision-analysis failure (network/API error, not a
+        // covered lens or backgrounded camera — both of those are real,
+        // informative states) carries zero information about the ward's
+        // actual situation. Syncing it would show a guardian a "LOW risk"
+        // card that looks exactly like a real all-clear reading but isn't
+        // one. Skip it — unless audio picked up something real this cycle,
+        // or shake/manual made this event informative on its own.
+        const isUninformativeFailure =
+          event.riskLevel === "low" &&
+          event.aiSummary === NO_ANALYSIS_SUMMARY &&
+          !event.audioSummary &&
+          !event.transcript &&
+          !(event.source === "shake" || (event.source?.includes("shake") ?? false)) &&
+          event.source !== "manual";
+        if (isUninformativeFailure) return true; // nothing worth syncing yet
+
         // events.session_id references sessions.id — normally already
         // created by useSessionStore.startSession, but upsert defensively
         // in case that failed silently; this is cheap and idempotent.
@@ -89,8 +106,14 @@ export const useAlertStore = create<AlertStore>()(
           timestamp: new Date(event.timestamp).toISOString(),
           risk_level: event.riskLevel,
           ai_summary: event.aiSummary,
+          concerns: event.concerns ?? null,
+          confidence: event.confidence ?? null,
           audio_summary: event.audioSummary ?? null,
+          audio_concerns: event.audioConcerns ?? null,
+          audio_confidence: event.audioConfidence ?? null,
           photo_url: event.photoUri,
+          photo_storage_path: event.photoStoragePath ?? null,
+          audio_storage_path: event.audioStoragePath ?? null,
           transcript: event.transcript ?? null,
           latitude: event.location?.lat ?? null,
           longitude: event.location?.lng ?? null,

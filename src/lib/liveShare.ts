@@ -61,27 +61,9 @@ export async function revokeShareLink(id: string): Promise<void> {
   }
 }
 
-// Called once per monitoring cycle while a share link is active for the
-// current session — see lib/monitoring.ts. Not synced anywhere else, so a
-// failure here just means the shared map is briefly stale, not lost data.
-export async function pushLiveLocationUpdate(
-  sessionId: string,
-  lat: number,
-  lng: number,
-): Promise<void> {
-  const { error } = await supabase
-    .from("sessions")
-    .update({
-      last_lat: lat,
-      last_lng: lng,
-      last_location_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId);
-
-  if (error) {
-    console.error(
-      "[liveShare] Failed to push live location update:",
-      error.message,
-    );
-  }
-}
+// sessions.last_lat/last_lng (what the shared map reads) is now kept
+// current by lib/location.ts's maybePushLocationPing, called on every
+// active session regardless of whether a share link exists — this used
+// to be the only thing writing those columns, gated on a share link
+// being active, which meant a ward who never used Live Share never got
+// a position synced at all. See supabase/migrations/015_location_points.sql.

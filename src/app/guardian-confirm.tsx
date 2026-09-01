@@ -3,8 +3,10 @@ import {
   getPendingLink,
   revokeWardLink,
 } from "@/lib/guardian";
+import { supabase } from "@/lib/supabase";
+import { useSettingsStore } from "@/store/useSettingsStore";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Shield, ShieldOff } from "lucide-react-native";
+import { LogIn, Shield, ShieldOff } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -32,6 +34,28 @@ export default function GuardianConfirmScreen() {
   >("loading");
   const [guardianEmail, setGuardianEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+
+  // Tapping the email link alone must never be enough to register
+  // consent — the person has to actually be signed in as themselves
+  // before Accept can do anything. authChecked prevents a flash of the
+  // "sign in first" panel before the initial session check resolves.
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setIsAuthenticated(!!data.session?.user);
+      setAuthChecked(true);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session?.user);
+      setAuthChecked(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!linkId) return;
@@ -45,12 +69,27 @@ export default function GuardianConfirmScreen() {
     });
   }, [linkId]);
 
-  async function handleAccept() {
+  function handleSignInFirst() {
     if (!linkId) return;
+    useSettingsStore.getState().updateSettings({
+      pendingGuardianConfirmLinkId: linkId,
+    });
+    router.push("/(auth)/sign-in");
+  }
+
+  async function handleAccept() {
+    if (!linkId || !isAuthenticated) return;
     setBusy(true);
+    setAcceptError(null);
     const ok = await acceptGuardianLink(linkId);
     setBusy(false);
-    if (ok) setStatus("done");
+    if (ok) {
+      setStatus("done");
+    } else {
+      setAcceptError(
+        "Couldn't confirm this request. Make sure you're signed in with the account this request was sent to.",
+      );
+    }
   }
 
   async function handleDecline() {
@@ -172,6 +211,61 @@ export default function GuardianConfirmScreen() {
               </Text>
             </TouchableOpacity>
           </>
+        ) : authChecked && !isAuthenticated ? (
+          <>
+            <Shield size={40} color={CYAN} strokeWidth={1.5} />
+            <Text
+              style={{
+                fontFamily: "Outfit_600SemiBold",
+                fontSize: 18,
+                color: "#F0F0F5",
+                marginTop: 16,
+                textAlign: "center",
+              }}
+            >
+              Sign in to confirm
+            </Text>
+            <Text
+              style={{
+                fontFamily: "DMSans_400Regular",
+                fontSize: 14,
+                lineHeight: 21,
+                color: MUTED,
+                marginTop: 8,
+                marginBottom: 28,
+                textAlign: "center",
+              }}
+            >
+              {guardianEmail ?? "Someone"} wants to be able to see your live
+              status, event log, and alerts. Sign in with your own account
+              first — tapping this link alone isn't enough to confirm.
+            </Text>
+            <TouchableOpacity
+              onPress={handleSignInFirst}
+              activeOpacity={0.85}
+              style={{
+                flexDirection: "row",
+                gap: 8,
+                height: 52,
+                paddingHorizontal: 32,
+                borderRadius: 9999,
+                backgroundColor: CYAN,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <LogIn size={18} color="#001F24" strokeWidth={2} />
+              <Text
+                style={{
+                  fontFamily: "DMSans_500Medium",
+                  fontSize: 15,
+                  color: "#001F24",
+                }}
+              >
+                Sign In
+              </Text>
+            </TouchableOpacity>
+          </>
         ) : (
           <>
             <Shield size={40} color={CYAN} strokeWidth={1.5} />
@@ -193,7 +287,7 @@ export default function GuardianConfirmScreen() {
                 lineHeight: 21,
                 color: MUTED,
                 marginTop: 8,
-                marginBottom: 28,
+                marginBottom: acceptError ? 12 : 28,
                 textAlign: "center",
               }}
             >
@@ -201,6 +295,19 @@ export default function GuardianConfirmScreen() {
               status, event log, and alerts. Nothing is shared until you
               confirm.
             </Text>
+            {acceptError ? (
+              <Text
+                style={{
+                  fontFamily: "DMSans_400Regular",
+                  fontSize: 12,
+                  color: "#FF3D3D",
+                  marginBottom: 16,
+                  textAlign: "center",
+                }}
+              >
+                {acceptError}
+              </Text>
+            ) : null}
             <View style={{ flexDirection: "row", gap: 12, width: "100%" }}>
               <TouchableOpacity
                 onPress={handleDecline}

@@ -170,9 +170,12 @@ function mimeTypeFromUri(uri: string): string {
   return "audio/m4a";
 }
 
-export async function analyseAudioTranscript(
-  transcript: string,
-): Promise<{ audioSummary: string | null; audioRisk: RiskLevel | null }> {
+export async function analyseAudioTranscript(transcript: string): Promise<{
+  audioSummary: string | null;
+  audioRisk: RiskLevel | null;
+  audioConcerns: string[] | null;
+  audioConfidence: number | null;
+}> {
   try {
     console.log("[audio] sending transcript to GPT-4o for analysis");
     const { data, error } = await supabase.functions.invoke("analyse-audio", {
@@ -186,17 +189,37 @@ export async function analyseAudioTranscript(
       } else {
         console.error("[audio] analyseAudioTranscript error:", error.message);
       }
-      return { audioSummary: null, audioRisk: null };
+      return {
+        audioSummary: null,
+        audioRisk: null,
+        audioConcerns: null,
+        audioConfidence: null,
+      };
     }
-    const d = data as { summary: string | null; riskLevel?: string | null };
+    const d = data as {
+      summary: string | null;
+      riskLevel?: string | null;
+      concerns?: string[];
+      confidence?: number;
+    };
     console.log("[audio] AI result — risk:", d.riskLevel);
     const r = d.riskLevel;
     const audioRisk: RiskLevel | null =
       r === "low" || r === "medium" || r === "high" ? r : null;
-    return { audioSummary: d.summary ?? null, audioRisk };
+    return {
+      audioSummary: d.summary ?? null,
+      audioRisk,
+      audioConcerns: d.concerns?.length ? d.concerns : null,
+      audioConfidence: typeof d.confidence === "number" ? d.confidence : null,
+    };
   } catch (err) {
     console.error("[audio] analyseAudioTranscript failed:", err);
-    return { audioSummary: null, audioRisk: null };
+    return {
+      audioSummary: null,
+      audioRisk: null,
+      audioConcerns: null,
+      audioConfidence: null,
+    };
   }
 }
 

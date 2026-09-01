@@ -87,6 +87,54 @@ export async function cancelWellnessCheckIn(): Promise<void> {
   }
 }
 
+// What's actually scheduled on this device right now — lets a caller
+// (lib/settingsSync.ts) tell "nothing to do" apart from "need to
+// reschedule", instead of cancelling/rescheduling identically on every
+// sync.
+export async function getScheduledCheckInTime(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(KEY_CHECK_IN_TIME);
+  } catch (err) {
+    console.error("[wellness] getScheduledCheckInTime failed:", err);
+    return null;
+  }
+}
+
+// ─── Time parsing/formatting ────────────────────────────────────────────────
+// Shared between the ward's own Settings screen and a guardian's remote
+// control of the same setting (guardian/[wardId].tsx).
+
+export function parseTimeInput(input: string): string | null {
+  const s = input.trim();
+  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) {
+    const h = parseInt(m24[1], 10);
+    const m = parseInt(m24[2], 10);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59)
+      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+  }
+  const m12 = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const m = m12[2] ? parseInt(m12[2], 10) : 0;
+    const ampm = m12[3].toLowerCase();
+    if (h === 12) h = ampm === "am" ? 0 : 12;
+    else if (ampm === "pm") h += 12;
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59)
+      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+  }
+  return null;
+}
+
+export function formatTime12h(time24: string): string {
+  const [hourStr, minuteStr] = time24.split(":");
+  const h = parseInt(hourStr, 10);
+  const m = parseInt(minuteStr, 10);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
+}
+
 // ─── Confirmation ─────────────────────────────────────────────────────────────
 
 // Called when the user taps "I'm Safe" on the notification. Persists a

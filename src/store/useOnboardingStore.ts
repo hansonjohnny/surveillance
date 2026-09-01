@@ -6,6 +6,17 @@ import { useSettingsStore } from "./useSettingsStore";
 export const STORAGE_KEY = "@surveillance_ai/onboarding";
 
 export type OnboardingData = {
+  // Set once, at the very first onboarding screen (account-type.tsx) —
+  // the only place account type is ever decided. Distinct from `who`,
+  // which is now purely descriptive (see who.tsx / guardian-who.tsx).
+  accountType: "personal" | "guardian";
+  // Guardian-only — who they're setting the app up to monitor.
+  wardRelation: "child" | "other";
+  // Guardian's own phone number, collected at sign-up.tsx — synced to
+  // users.phone once a real session exists (see syncToSupabase below),
+  // since signup no longer grants one immediately (email confirmation
+  // is required first).
+  phone: string;
   when: string[];
   who: string;
   concern: string;
@@ -25,6 +36,7 @@ type OnboardingStore = {
   isComplete: boolean;
   set: (partial: Partial<OnboardingData>) => void;
   complete: () => Promise<void>;
+  reset: () => Promise<void>;
   syncToSupabase: (userId: string) => Promise<void>;
   hydrateFromSupabase: (userId: string) => Promise<void>;
   hydrate: () => Promise<void>;
@@ -46,8 +58,40 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
     set({ isComplete: true });
   },
 
+  // Called after a signup finishes (see sign-up.tsx) so this device's
+  // next account creation doesn't inherit stale answers — data.who in
+  // particular decides guardian vs self at signup, and would otherwise
+  // silently leak into whichever account gets created next.
+  reset: async () => {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    } catch (e) {
+      console.warn("[OnboardingStore] Failed to clear persisted onboarding data:", e);
+    }
+    set({ data: {}, isComplete: false });
+  },
+
+  // The one-time "finish signup" write, called once a real session
+  // exists — right after email confirmation (email-confirmed.tsx), or
+  // as a fallback on sign-in if that never ran (e.g. confirmed on a
+  // different device). Branches on accountType so both paths share one
+  // call site instead of the caller needing to know which one it is.
   syncToSupabase: async (userId: string) => {
     const { data } = get();
+
+    if (data.accountType === "guardian") {
+      const { error } = await supabase
+        .from("users")
+        .update({ role: "guardian", phone: data.phone ?? "" })
+        .eq("id", userId);
+      if (error) {
+        console.warn(
+          "[OnboardingStore] Failed to sync guardian role/phone:",
+          error.message,
+        );
+      }
+      return;
+    }
 
     const { error: contactError } = await supabase.from("contacts").insert({
       user_id: userId,
@@ -90,7 +134,7 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
       const [contactResult, settingsResult] = await Promise.all([
         supabase
           .from("contacts")
-          .select("name, phone, email")
+          .select("name, phone, email, backup_name, backup_phone, backup_email")
           .eq("user_id", userId)
           .single(),
         supabase
@@ -127,6 +171,12 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
         contactName: restored.contactName ?? "",
         contactPhone: restored.contactPhone ?? "",
         contactEmail: restored.contactEmail ?? "",
+        // Guardian-provisioned wards get a backup contact set by the
+        // guardian at creation time (see create-ward-account/index.ts) —
+        // this is what pulls it down to the ward's own device.
+        backupContactName: contactResult.data?.backup_name ?? "",
+        backupContactPhone: contactResult.data?.backup_phone ?? "",
+        backupContactEmail: contactResult.data?.backup_email ?? "",
         monitoringInterval: restored.interval ?? 30,
         shakeSensitivity: SENSITIVITY_MAP[restored.sensitivity ?? 1],
         stealthMode: restored.stealthMode ?? false,

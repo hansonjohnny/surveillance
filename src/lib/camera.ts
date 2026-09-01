@@ -14,6 +14,7 @@
 import { Camera, type CameraView } from "expo-camera";
 import * as FileSystem from "expo-file-system/legacy";
 import type { RefObject } from "react";
+import { getColors } from "react-native-image-colors";
 
 let _ref: RefObject<CameraView | null> | null = null;
 let _ready = false;
@@ -102,6 +103,56 @@ export async function takeSnapshot(): Promise<string | null> {
     // the call ends and the system releases the audio session.
     requestRemount();
     return null;
+  }
+}
+
+// A covered lens (pocket, hand over camera) or otherwise blocked frame
+// gives two independent, cheap-to-check signals before ever calling
+// GPT-4o: the JPEG compresses far smaller than a normal scene (uniform
+// regions compress extremely well), and the frame's average color is
+// near-black. Either signal alone is enough to skip the cycle's vision
+// call rather than pay for analysing a frame with nothing to see -- the
+// prompt already treats an unclear scene as low risk, this just avoids
+// spending an API call to reach that same conclusion.
+//
+// Both thresholds are heuristic starting points (quality: 0.6 JPEG,
+// skipProcessing: true, from takeSnapshot above) -- tune if real-world
+// testing shows false positives (a very dark but detailed room) or false
+// negatives (a covered lens that still reads as "bright enough").
+const MIN_PHOTO_BYTES = 15000;
+const LOW_LUMINANCE_THRESHOLD = 25; // 0-255 scale, roughly 10% brightness
+
+function hexToLuminance(hex: string): number {
+  const clean = hex.replace("#", "");
+  // Android's Palette API can return #AARRGGBB -- drop the alpha pair if present.
+  const rgb = clean.length === 8 ? clean.slice(2) : clean;
+  const r = parseInt(rgb.slice(0, 2), 16);
+  const g = parseInt(rgb.slice(2, 4), 16);
+  const b = parseInt(rgb.slice(4, 6), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+export async function isFrameLikelyCovered(uri: string): Promise<boolean> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    const size = (info as { size?: number }).size;
+    if (info.exists && typeof size === "number" && size < MIN_PHOTO_BYTES) {
+      return true;
+    }
+
+    const colors = await getColors(uri, { cache: false, quality: "low" });
+    const hex =
+      colors.platform === "ios"
+        ? colors.background
+        : colors.platform === "android"
+          ? colors.average
+          : null;
+    if (!hex) return false;
+
+    return hexToLuminance(hex) < LOW_LUMINANCE_THRESHOLD;
+  } catch (err) {
+    console.error("[camera] isFrameLikelyCovered failed:", err);
+    return false; // fail open -- never block real analysis over a broken check
   }
 }
 

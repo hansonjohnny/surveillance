@@ -8,10 +8,16 @@ import {
   Settings2,
 } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSettingsStore } from "../../store/useSettingsStore";
 import { colors } from "../../theme/colors";
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  // A ward doesn't review surveillance data about themselves — the
+  // guardian already sees event log, history, and alerts on their own
+  // dashboard via RLS. Nothing about capture/sync changes, only which
+  // tabs render here.
+  const isWard = useSettingsStore((s) => s.isWard);
 
   return (
     <Tabs
@@ -48,6 +54,7 @@ export default function TabLayout() {
         name="log"
         options={{
           title: "EVENT LOG",
+          href: isWard ? null : undefined,
           tabBarIcon: ({ color }) => (
             <ScrollText size={22} color={color} strokeWidth={1.5} />
           ),
@@ -66,6 +73,7 @@ export default function TabLayout() {
         name="history"
         options={{
           title: "HISTORY",
+          href: isWard ? null : undefined,
           tabBarIcon: ({ color }) => (
             <History size={22} color={color} strokeWidth={1.5} />
           ),
@@ -75,6 +83,7 @@ export default function TabLayout() {
         name="alerts"
         options={{
           title: "ALERTS",
+          href: isWard ? null : undefined,
           tabBarIcon: ({ color }) => (
             <BellRing size={22} color={color} strokeWidth={1.5} />
           ),

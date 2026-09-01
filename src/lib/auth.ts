@@ -12,6 +12,8 @@
  */
 
 import type { Session, User } from "@supabase/supabase-js";
+import { useOnboardingStore } from "../store/useOnboardingStore";
+import { useSettingsStore } from "../store/useSettingsStore";
 import { CONFIRM_BRIDGE_URL, supabase } from "./supabase";
 
 // ─── Registration ─────────────────────────────────────────────────────────────
@@ -19,7 +21,7 @@ import { CONFIRM_BRIDGE_URL, supabase } from "./supabase";
 export async function signUp(
   email: string,
   password: string,
-  options?: { data?: Record<string, unknown> },
+  options?: { data?: Record<string, unknown>; emailRedirectTo?: string },
 ): Promise<{ success: boolean; error: string | null }> {
   try {
     const { error } = await supabase.auth.signUp({ email, password, options });
@@ -123,4 +125,65 @@ export async function updatePassword(
   } catch {
     return { success: false, error: "An unexpected error occurred." };
   }
+}
+
+// ─── Post-authentication routing ───────────────────────────────────────────────
+
+// Called by sign-in.tsx on every sign-in so the role/ward routing
+// decision exists in one place. Also doubles as the "finish signup"
+// step for a brand-new account's first real session: email confirmation
+// no longer opens the app itself (see confirm.html — verifying the
+// email doesn't require the app to be installed on whatever device
+// checked it), so the role/phone or contact/settings write sign-up.tsx
+// deferred happens here instead, the next time the person actually
+// signs in on their phone.
+export async function resolvePostSignInDestination(
+  userId: string,
+): Promise<"/guardian" | "/(tabs)/home" | "/(onboarding)/permissions"> {
+  const wasOnboarded = useSettingsStore.getState().onboardingComplete;
+
+  const [{ data: userRow }, { data: wardLink }] = await Promise.all([
+    supabase.from("users").select("role").eq("id", userId).single(),
+    supabase
+      .from("guardian_links")
+      .select("id")
+      .eq("ward_id", userId)
+      .in("status", ["pending", "active"])
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (userRow?.role) useSettingsStore.getState().setRole(userRow.role);
+  let role = userRow?.role;
+
+  // A ward's very first sign-in gets a permissions-only screen instead
+  // of the full survey — never re-triggered on later sign-ins, since
+  // onboardingComplete is already true by then. A ward's account is
+  // provisioned by create-ward-account, not sign-up.tsx, so there's
+  // nothing deferred to finish here for them.
+  if (!wasOnboarded && wardLink) {
+    useSettingsStore.getState().setIsWard(true);
+    return "/(onboarding)/permissions";
+  }
+
+  // Gated on whether there's actually pending signup data to finish —
+  // not on onboardingComplete, which is device-wide and doesn't reset
+  // between different accounts tested on the same device (a fresh
+  // account's first sign-in can easily land on a device where an
+  // earlier, unrelated account already completed onboarding). This is
+  // self-limiting instead: reset() below clears the data the moment
+  // it's used, so it only ever fires once per pending signup regardless
+  // of onboardingComplete's state.
+  const pendingAccountType = useOnboardingStore.getState().data.accountType;
+  if (pendingAccountType) {
+    await useOnboardingStore.getState().syncToSupabase(userId);
+    await useOnboardingStore.getState().reset();
+    if (pendingAccountType === "guardian") {
+      role = "guardian";
+      useSettingsStore.getState().setRole("guardian");
+    }
+  }
+
+  useSettingsStore.getState().markOnboardingComplete();
+  return role === "guardian" ? "/guardian" : "/(tabs)/home";
 }

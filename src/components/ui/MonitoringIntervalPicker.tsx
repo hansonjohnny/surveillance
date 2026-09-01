@@ -13,13 +13,15 @@ export function MonitoringIntervalPicker({
   value,
   onChange,
   hideHeader = false,
+  disabled = false,
 }: {
   value: Interval;
   onChange: (v: Interval) => void;
   hideHeader?: boolean;
+  disabled?: boolean;
 }) {
   return (
-    <View>
+    <View style={{ opacity: disabled ? 0.5 : 1 }}>
       {!hideHeader && (
         <View className="flex-row justify-between items-center mb-4">
           <Text className="font-body text-body-lg text-text-primary">Monitoring Interval</Text>
@@ -36,6 +38,7 @@ export function MonitoringIntervalPicker({
             <Pressable
               key={opt.value}
               onPress={() => onChange(opt.value)}
+              disabled={disabled}
               className={`flex-1 py-3.5 px-1.5 rounded-md border items-center ${
                 active
                   ? 'border-accent/40 bg-accent/[0.08]'

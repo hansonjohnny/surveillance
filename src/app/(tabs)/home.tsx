@@ -20,8 +20,6 @@ import { StealthOverlay } from "../../components/ui/StealthOverlay";
 import { triggerAlert } from "../../lib/alerts";
 import { generateUUID } from "../../lib/id";
 import { getCurrentLocation } from "../../lib/location";
-import { runMonitoringCycle } from "../../lib/monitoring";
-import { sendLocalNotification } from "../../lib/notifications";
 import { isCapReached } from "../../lib/plans";
 import { buildRiskTaggedPath, countRisks } from "../../lib/riskPath";
 import { useAlertStore } from "../../store/useAlertStore";
@@ -90,11 +88,8 @@ export default function HomeScreen() {
     stopSession,
     startLocationHistoryTracking,
     stopLocationHistoryTracking,
-    startShakeDetection,
-    stopShakeDetection,
   } = useSessionStore();
-  const monitoringInterval = useSettingsStore((s) => s.monitoringInterval);
-  const shakeSensitivity = useSettingsStore((s) => s.shakeSensitivity);
+  const isWard = useSettingsStore((s) => s.isWard);
   const stealthMode = useSettingsStore((s) => s.stealthMode);
   const plan = useSettingsStore((s) => s.plan);
   const todayUsage = useSettingsStore((s) => s.todayUsage);
@@ -131,21 +126,12 @@ export default function HomeScreen() {
     }
   }, [isActive]);
 
-  // Monitoring cycle — waits 2 s on session start so SilentCamera can
-  // initialise before the first snapshot attempt, then repeats every
-  // monitoringInterval seconds. Restarts if the interval setting changes.
-  useEffect(() => {
-    if (!isActive) return;
-    let intervalId: ReturnType<typeof setInterval>;
-    const delayId = setTimeout(() => {
-      runMonitoringCycle();
-      intervalId = setInterval(runMonitoringCycle, monitoringInterval * 1000);
-    }, 2000);
-    return () => {
-      clearTimeout(delayId);
-      clearInterval(intervalId);
-    };
-  }, [isActive, monitoringInterval]);
+  // The monitoring cycle and shake detection both now live in
+  // useSessionStore's startSession()/stopSession() themselves (not tied
+  // to this screen being mounted) — see lib/monitoring.ts's
+  // handleShakeDetected. That's what makes a remote-started session
+  // (see lib/notifications.ts's background task) actually run real
+  // monitoring instead of just flipping a flag nothing listens to.
 
   // Continuous GPS watcher — records the path travelled at a much finer
   // resolution than the monitoring cycle, for the live map and path trail.
@@ -154,17 +140,6 @@ export default function HomeScreen() {
     startLocationHistoryTracking();
     return () => stopLocationHistoryTracking();
   }, [isActive]);
-
-  // Shake detection — runs its own continuous accelerometer listener,
-  // completely independent of the timed monitoring cycle (see lib/sensors.ts).
-  // A shake bypasses the AI cycle entirely and fires an instant High-risk
-  // alert, same as Manual SOS, since a sustained impact is a high-confidence
-  // signal on its own. Restarts if the sensitivity setting changes mid-session.
-  useEffect(() => {
-    if (!isActive) return;
-    startShakeDetection(shakeSensitivity, handleShake);
-    return () => stopShakeDetection();
-  }, [isActive, shakeSensitivity]);
 
   // Archives the just-ended session's risk-tagged path so it can be reviewed
   // later from the History tab, then stops the session as normal.
@@ -185,51 +160,6 @@ export default function HomeScreen() {
       }
     }
     stopSession();
-  }
-
-  // Fired by the accelerometer listener above on a sustained impact (see
-  // lib/sensors.ts — a g-force spike held for 500ms, with a 5s cooldown so
-  // one fall doesn't fire repeatedly). No AI call, no cancel window — a
-  // physical impact is high-confidence on its own.
-  async function handleShake() {
-    const { contactName, contactPhone, contactEmail } =
-      useSettingsStore.getState();
-    if (!contactPhone || !contactEmail) {
-      console.warn("[home] Shake detected but no contact configured.");
-      return;
-    }
-
-    const location = await getCurrentLocation();
-    const event: Event = {
-      id: generateUUID(),
-      sessionId: useSessionStore.getState().sessionId ?? generateUUID(),
-      timestamp: Date.now(),
-      riskLevel: "high",
-      aiSummary: "Sudden impact detected.",
-      audioSummary: undefined,
-      audioUri: undefined,
-      photoUri: null,
-      transcript: undefined,
-      location,
-      source: "shake",
-    };
-    useAlertStore.getState().addEvent(event);
-
-    sendLocalNotification(
-      "HIGH RISK DETECTED",
-      "Impact detected — alerting your emergency contact.",
-    ).catch((err) =>
-      console.error("[home] sendLocalNotification (shake) failed:", err),
-    );
-
-    const contact: Contact = {
-      name: contactName || "Emergency Contact",
-      phone: contactPhone,
-      email: contactEmail,
-    };
-    triggerAlert(event, contact).catch((err) =>
-      console.error("[home] Shake triggerAlert failed:", err),
-    );
   }
 
   function handleManualSOS() {
@@ -364,22 +294,26 @@ export default function HomeScreen() {
               Surveillance AI
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={() => router.push("/alerts")}
-            style={{ padding: 8 }}
-          >
-            <BellRing
-              size={24}
-              color={CYAN}
-              strokeWidth={1.5}
-              style={{
-                shadowColor: CYAN,
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-              }}
-            />
-          </TouchableOpacity>
+          {isWard ? (
+            <View style={{ width: 24, height: 24 }} />
+          ) : (
+            <TouchableOpacity
+              onPress={() => router.push("/alerts")}
+              style={{ padding: 8 }}
+            >
+              <BellRing
+                size={24}
+                color={CYAN}
+                strokeWidth={1.5}
+                style={{
+                  shadowColor: CYAN,
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                }}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </SafeAreaView>
 
@@ -509,9 +443,9 @@ export default function HomeScreen() {
                 paddingHorizontal: 12,
                 paddingVertical: 4,
                 borderRadius: 9999,
-                backgroundColor: badge.bg,
+                backgroundColor: isActive ? badge.bg : "rgba(255,255,255,0.06)",
                 borderWidth: 1,
-                borderColor: badge.border,
+                borderColor: isActive ? badge.border : "rgba(255,255,255,0.12)",
               }}
             >
               <Text
@@ -519,15 +453,19 @@ export default function HomeScreen() {
                   fontFamily: "JetBrainsMono_400Regular",
                   fontSize: 11,
                   letterSpacing: 0.8,
-                  color: badge.text,
+                  color: isActive ? badge.text : MUTED,
                   textTransform: "uppercase",
                 }}
               >
-                {lastRiskLevel ?? "LOW"}
+                {isActive ? (lastRiskLevel ?? "LOW") : "NO DATA"}
               </Text>
             </View>
           </View>
-          {lastAISummary ? (
+          {/* Only show the last summary while a session is actually running
+              — otherwise this can display a stale reading from a session
+              that ended a while ago, implying monitoring is happening when
+              it isn't. */}
+          {isActive && lastAISummary ? (
             <Text
               style={{
                 fontFamily: "DMSans_400Regular",
@@ -543,63 +481,10 @@ export default function HomeScreen() {
             </Text>
           ) : null}
 
-          {/* Status rows — opacity-60 */}
-          <View style={{ gap: 12, paddingHorizontal: 8, opacity: 0.6 }}>
-            <View
-              style={{ flexDirection: "row", justifyContent: "space-between" }}
-            >
-              <Text
-                style={{
-                  fontFamily: "JetBrainsMono_400Regular",
-                  fontSize: 11,
-                  color: MUTED,
-                  letterSpacing: 0.5,
-                }}
-              >
-                NETWORK ENCRYPTION
-              </Text>
-              <Text
-                style={{
-                  fontFamily: "JetBrainsMono_400Regular",
-                  fontSize: 11,
-                  color: CYAN,
-                  letterSpacing: 0.5,
-                }}
-              >
-                256-BIT AES
-              </Text>
-            </View>
-            <View
-              style={{ flexDirection: "row", justifyContent: "space-between" }}
-            >
-              <Text
-                style={{
-                  fontFamily: "JetBrainsMono_400Regular",
-                  fontSize: 11,
-                  color: MUTED,
-                  letterSpacing: 0.5,
-                }}
-              >
-                DEVICE TRUST SCORE
-              </Text>
-              <Text
-                style={{
-                  fontFamily: "JetBrainsMono_400Regular",
-                  fontSize: 11,
-                  color: RISK_LOW,
-                  letterSpacing: 0.5,
-                }}
-              >
-                98/100
-              </Text>
-            </View>
-          </View>
 
           {/* Cap reached banner */}
           {capReached && (
-            <TouchableOpacity
-              onPress={() => router.push("/upgrade")}
-              activeOpacity={0.8}
+            <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
@@ -631,19 +516,10 @@ export default function HomeScreen() {
                     marginTop: 1,
                   }}
                 >
-                  Upgrade for more coverage
+                  Monitoring continues, but AI analysis pauses until it resets tomorrow.
                 </Text>
               </View>
-              <Text
-                style={{
-                  fontFamily: "JetBrainsMono_400Regular",
-                  fontSize: 11,
-                  color: "#FFD740",
-                }}
-              >
-                UPGRADE →
-              </Text>
-            </TouchableOpacity>
+            </View>
           )}
 
           {/* Buttons */}

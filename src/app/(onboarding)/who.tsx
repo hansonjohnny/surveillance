@@ -138,17 +138,12 @@ export default function WhoScreen() {
           <ContinueButton
             onPress={() => {
               if (!selected) return;
+              // Purely descriptive now — account type (personal vs
+              // guardian) is decided once, at account-type.tsx, before
+              // this screen is ever reached. See useOnboardingStore's
+              // accountType field.
               setOnboarding({ who: selected });
-              // Anything but "Myself" means this person is setting the app
-              // up to monitor someone else, not to carry themselves —
-              // none of the following screens (emergency contact,
-              // monitoring preferences, camera/mic/location permissions)
-              // apply to a phone that isn't the one being monitored.
-              router.push(
-                selected === "myself"
-                  ? ("/(onboarding)/interstitial" as any)
-                  : ("/(onboarding)/guardian-setup" as any),
-              );
+              router.push("/(onboarding)/interstitial" as any);
             }}
             enabled={!!selected}
           />

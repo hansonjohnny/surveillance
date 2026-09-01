@@ -1,8 +1,10 @@
 import type { Location } from "@/types";
 import { Crosshair, Minus, Moon, Plus, Sun } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Linking, Text, TouchableOpacity, View } from "react-native";
+import { Linking, Platform, Text, TouchableOpacity, View } from "react-native";
 import WebView, { type WebViewMessageEvent } from "react-native-webview";
+
+const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
 
 function buildHtml(lat: number, lng: number) {
   return `<!DOCTYPE html>
@@ -57,9 +59,8 @@ function y2lat(y, z) {
   return Math.atan(Math.sinh(Math.PI * (1 - 2 * y / (Math.pow(2, z) * TILE)))) * 180 / Math.PI;
 }
 function tileUrl(tx, ty, z) {
-  var s = ['a','b','c','d'][Math.abs(tx + ty) % 4];
-  var style = isDark ? 'dark_all' : 'rastertiles/voyager';
-  return 'https://' + s + '.basemaps.cartocdn.com/' + style + '/' + z + '/' + tx + '/' + ty + '.png';
+  var style = isDark ? 'dataviz-dark' : 'dataviz';
+  return 'https://api.maptiler.com/maps/' + style + '/256/' + z + '/' + tx + '/' + ty + '.png?key=${MAPTILER_KEY}';
 }
 function applyTheme() {
   var t = document.getElementById('tiles');
@@ -194,7 +195,13 @@ var markerEl = document.getElementById('marker');
 markerEl.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: false });
 markerEl.addEventListener('touchend', function(e) {
   e.stopPropagation();
-  window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'openMaps', lat: actualLat, lng: actualLng }));
+  var msg = JSON.stringify({ type: 'openMaps', lat: actualLat, lng: actualLng });
+  // Native WebView: window.ReactNativeWebView.postMessage is how the app
+  // receives messages (onMessage prop). On web this same HTML runs inside
+  // a plain <iframe> instead (see LiveMap.tsx), which has no such bridge —
+  // fall back to standard window.postMessage to the parent frame there.
+  if (window.ReactNativeWebView) { window.ReactNativeWebView.postMessage(msg); }
+  else if (window.parent) { window.parent.postMessage(msg, '*'); }
 }, { passive: false });
 
 // ── Exposed functions called via injectJavaScript ───────────────────────────
@@ -215,6 +222,22 @@ window.setPath = function(points) {
 resizeCanvas();
 setTimeout(function() { resizeCanvas(); render(); }, 300);
 window.addEventListener('resize', function() { resizeCanvas(); render(); });
+
+// Native drives the functions above directly via injectJavaScript, which
+// evaluates JS straight into this context — this listener is never
+// triggered there. It exists only for the web <iframe> path (see
+// LiveMap.tsx), which has no injectJavaScript equivalent and talks to
+// this page over postMessage instead.
+window.addEventListener('message', function(e) {
+  var data = e.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'updateLocation') window.updateLocation(data.lat, data.lng);
+  else if (data.type === 'setPath') window.setPath(data.points);
+  else if (data.type === 'zoomIn') window.zoomIn();
+  else if (data.type === 'zoomOut') window.zoomOut();
+  else if (data.type === 'recenter') window.recenter();
+  else if (data.type === 'toggleTheme') window.toggleTheme();
+});
 </script>
 </body>
 </html>`;
@@ -227,8 +250,23 @@ type PathPoint = {
 };
 type Props = { location: Location | null; path?: PathPoint[] };
 
+// react-native-webview has no web implementation at all (its own web
+// fallback just renders "does not support this platform" text — verified
+// in node_modules/react-native-webview/src/WebView.tsx) — the same
+// self-contained HTML this builds for native runs on web too, just inside
+// a plain <iframe> instead, with postMessage standing in for
+// injectJavaScript/onMessage (neither of which exist on an iframe). See
+// the "message" listener/postMessage fallback inside buildHtml's own
+// script above for the other half of this bridge.
+const isWeb = Platform.OS === "web";
+
 export function LiveMap({ location, path = [] }: Props) {
   const webViewRef = useRef<WebView>(null);
+  // Untyped ref (not HTMLIFrameElement) -- this project's tsconfig doesn't
+  // pull in DOM lib types (a React Native app has no DOM on native), so a
+  // real DOM element type isn't available to reference here. Only ever
+  // read on the isWeb branch below.
+  const iframeRef = useRef<any>(null);
   // Capture the first real GPS fix once — prevents WebView source from
   // being rebuilt on subsequent location updates, which would reload the map.
   const initialRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -238,23 +276,51 @@ export function LiveMap({ location, path = [] }: Props) {
   const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
-    if (!location || !webViewRef.current) return;
+    if (!location) return;
+    if (isWeb) {
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "updateLocation", lat: location.lat, lng: location.lng },
+        "*",
+      );
+      return;
+    }
+    if (!webViewRef.current) return;
     webViewRef.current.injectJavaScript(
       `window.updateLocation(${location.lat}, ${location.lng}); true;`,
     );
   }, [location]);
 
   useEffect(() => {
-    if (!webViewRef.current || path.length === 0) return;
-    const serialized = JSON.stringify(
-      path.map((p) => ({
-        lat: p.lat,
-        lng: p.lng,
-        riskLevel: p.riskLevel ?? null,
-      })),
-    );
-    webViewRef.current.injectJavaScript(`window.setPath(${serialized}); true;`);
+    if (path.length === 0) return;
+    const points = path.map((p) => ({
+      lat: p.lat,
+      lng: p.lng,
+      riskLevel: p.riskLevel ?? null,
+    }));
+    if (isWeb) {
+      iframeRef.current?.contentWindow?.postMessage({ type: "setPath", points }, "*");
+      return;
+    }
+    if (!webViewRef.current) return;
+    webViewRef.current.injectJavaScript(`window.setPath(${JSON.stringify(points)}); true;`);
   }, [path]);
+
+  // Web equivalent of the native onMessage prop — listens for the same
+  // { type: 'openMaps', ... } message buildHtml's script sends, just over
+  // window.postMessage instead of the WebView bridge.
+  useEffect(() => {
+    if (!isWeb) return;
+    function onMessage(e: MessageEvent) {
+      try {
+        const msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (msg?.type === "openMaps") {
+          Linking.openURL(`https://maps.google.com/?q=${msg.lat},${msg.lng}`);
+        }
+      } catch {}
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   // Show a placeholder until the first GPS fix arrives.
   if (!initialRef.current) {
@@ -274,7 +340,16 @@ export function LiveMap({ location, path = [] }: Props) {
     );
   }
 
+  // fn is one of the window.* function names buildHtml's script exposes
+  // (e.g. "window.zoomIn") -- native evaluates it directly via
+  // injectJavaScript; web posts the matching message type instead (see
+  // the "message" listener inside buildHtml's script).
   function inject(fn: string) {
+    if (isWeb) {
+      const type = fn.replace("window.", "");
+      iframeRef.current?.contentWindow?.postMessage({ type }, "*");
+      return;
+    }
     webViewRef.current?.injectJavaScript(`${fn}(); true;`);
   }
 
@@ -294,22 +369,34 @@ export function LiveMap({ location, path = [] }: Props) {
 
   return (
     <View className="flex-1">
-      <WebView
-        ref={webViewRef}
-        className="flex-1"
-        style={{ backgroundColor: "#0d0d14" }}
-        source={{
-          html: buildHtml(initialRef.current.lat, initialRef.current.lng),
-          baseUrl: "https://carto.com",
-        }}
-        scrollEnabled={false}
-        bounces={false}
-        originWhitelist={["*"]}
-        javaScriptEnabled
-        domStorageEnabled
-        mixedContentMode="always"
-        onMessage={handleMessage}
-      />
+      {isWeb ? (
+        // srcDoc embeds the same self-contained HTML/JS buildHtml produces
+        // for native, sandboxed the same way an <iframe> always is —
+        // communication in/out goes over postMessage (see the effects and
+        // inject() above), since injectJavaScript/onMessage don't exist here.
+        <iframe
+          ref={iframeRef}
+          srcDoc={buildHtml(initialRef.current.lat, initialRef.current.lng)}
+          style={{ flex: 1, border: "none", backgroundColor: "#0d0d14" }}
+        />
+      ) : (
+        <WebView
+          ref={webViewRef}
+          className="flex-1"
+          style={{ backgroundColor: "#0d0d14" }}
+          source={{
+            html: buildHtml(initialRef.current.lat, initialRef.current.lng),
+            baseUrl: "https://maptiler.com",
+          }}
+          scrollEnabled={false}
+          bounces={false}
+          originWhitelist={["*"]}
+          javaScriptEnabled
+          domStorageEnabled
+          mixedContentMode="always"
+          onMessage={handleMessage}
+        />
+      )}
 
       {/* Map controls — NativeWind overlay */}
       <View className="absolute right-4 bottom-12 gap-2">

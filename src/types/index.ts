@@ -45,9 +45,21 @@ export type Event = {
   timestamp: number;
   riskLevel: RiskLevel;
   aiSummary: string;
+  // Specific flagged details and 0.0-1.0 confidence GPT-4o returns
+  // alongside the image risk score/summary — see lib/prompts.ts.
+  concerns?: string[] | null;
+  confidence?: number | null;
   audioSummary: string | null | undefined;
+  audioConcerns?: string[] | null;
+  audioConfidence?: number | null;
   audioUri: string | null | undefined;
   photoUri: string | null;
+  // Storage paths (event-media bucket) for a Medium/High event's photo/
+  // audio -- populated once lib/storage.ts's uploadEventMedia succeeds.
+  // Only meaningful once resolved to a signed URL (lib/storage.ts's
+  // getSignedMediaUrl); the raw path itself isn't directly renderable.
+  photoStoragePath?: string | null;
+  audioStoragePath?: string | null;
   transcript: string | null | undefined;
   location: Location | null;
   // 'ai' | 'shake' | 'shake+ai' — used by alert pipeline to decide whether

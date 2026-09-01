@@ -2,9 +2,11 @@ import { useRouter } from "expo-router";
 import {
   ArrowRight,
   AtSign,
+  CheckCircle2,
   Eye,
   EyeOff,
   Lock,
+  Phone,
   Shield,
   User,
 } from "lucide-react-native";
@@ -24,23 +26,35 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signUp } from "../../lib/auth";
-import { supabase } from "../../lib/supabase";
+import { CONFIRM_BRIDGE_URL } from "../../lib/supabase";
 import { useOnboardingStore } from "../../store/useOnboardingStore";
 import { colors } from "../../theme/colors";
 
+const PHONE_REGEX = /^\+[\d\s\-().]{7,15}$/;
+
 export default function SignUpScreen() {
   const router = useRouter();
-  const syncToSupabase = useOnboardingStore((s) => s.syncToSupabase);
+  const setOnboarding = useOnboardingStore((s) => s.set);
+  // accountType is decided once, at account-type.tsx, before this screen
+  // is ever reached — read reactively so the phone field can render
+  // immediately, not just at submit time.
+  const isGuardian = useOnboardingStore((s) => s.data.accountType) === "guardian";
+  // Lives in useOnboardingStore, not local state, like every other field
+  // in this flow — it has to survive until email-confirmed.tsx can
+  // write it, which may be well after this screen unmounts.
+  const phone = useOnboardingStore((s) => s.data.phone) ?? "";
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [signupComplete, setSignupComplete] = useState(false);
 
   const [nameFocused, setNameFocused] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const [phoneFocused, setPhoneFocused] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -74,45 +88,30 @@ export default function SignUpScreen() {
       return;
     }
 
+    if (isGuardian && !PHONE_REGEX.test(phone.trim())) {
+      setApiError("Enter a valid phone number, e.g. +1 555 123 4567.");
+      return;
+    }
+
     setLoading(true);
     const { success, error } = await signUp(email.trim(), password, {
       data: { full_name: fullName },
+      emailRedirectTo: CONFIRM_BRIDGE_URL,
     });
+    setLoading(false);
 
     if (!success) {
-      setLoading(false);
       setApiError(error ?? "Sign-up failed.");
       return;
     }
 
-    // who.tsx routes anything but "myself" to guardian-setup.tsx instead
-    // of the rest of self-monitoring onboarding — this is the one place
-    // both paths converge, so it's where they finally diverge again.
-    const isGuardian = useOnboardingStore.getState().data.who !== "myself";
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
-      if (isGuardian) {
-        const { error: roleError } = await supabase
-          .from("users")
-          .update({ role: "guardian" })
-          .eq("id", user.id);
-        if (roleError) {
-          console.error("[sign-up] Failed to set guardian role:", roleError.message);
-        }
-      } else {
-        // Sync onboarding contact + preferences to Supabase now that the
-        // user is authenticated and auth.uid() resolves. Skipped for a
-        // guardian — they have no monitoring preferences to sync.
-        await syncToSupabase(user.id);
-      }
-    }
-
-    setLoading(false);
-    router.replace(isGuardian ? ("/guardian" as never) : "/(tabs)/home");
+    // No session exists yet — email confirmation is required first (see
+    // supabase/config, mailer_autoconfirm: false). Role/phone or
+    // contact/settings can't be written until then (both need auth.uid()
+    // under RLS), so that write is deferred to email-confirmed.tsx, and
+    // this account's onboarding answers stay in useOnboardingStore
+    // (not reset yet) so they're still there when it runs.
+    setSignupComplete(true);
   }
 
   return (
@@ -161,6 +160,39 @@ export default function SignUpScreen() {
             </View>
           </Animated.View>
 
+          {signupComplete ? (
+            <View className="w-full bg-bg-glass border border-border-default rounded-lg p-6 items-center">
+              <View className="w-16 h-16 rounded-full bg-[rgba(0,230,118,0.10)] border border-[rgba(0,230,118,0.30)] items-center justify-center mb-5">
+                <CheckCircle2 size={28} color={colors.risk.low} strokeWidth={1.5} />
+              </View>
+              <Text className="font-display-bold text-display-md text-text-primary text-center mb-2">
+                Confirm your email to continue
+              </Text>
+              <Text className="font-body text-body-md text-text-secondary text-center mb-6">
+                We sent a link to {email}. Tap it, then come back and sign
+                in.
+              </Text>
+              <Pressable
+                onPress={() => router.replace("/(auth)/sign-in")}
+                className="h-14 rounded-full bg-accent flex-row items-center justify-center gap-2 w-full"
+                style={{
+                  shadowColor: colors.accent,
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.45,
+                  shadowRadius: 18,
+                }}
+              >
+                <Text
+                  className="font-body-medium text-[16px] text-text-inverse"
+                  style={{ letterSpacing: 0.3 }}
+                >
+                  Go to Sign In
+                </Text>
+                <ArrowRight size={18} color={colors.bg.primary} strokeWidth={2} />
+              </Pressable>
+            </View>
+          ) : (
+          <>
           {/* ── Headline ── */}
           <Text className="font-display-bold text-display-lg text-text-primary text-center mb-2.5">
             Create Your Account
@@ -203,6 +235,43 @@ export default function SignUpScreen() {
                 onBlur={() => setNameFocused(false)}
               />
             </View>
+
+            {/* Phone — guardian accounts only, auto-fills as the ward's
+                primary emergency contact at creation time */}
+            {isGuardian && (
+              <View className="gap-2">
+                <View className="flex-row items-center gap-1.5">
+                  <Phone
+                    size={12}
+                    color={colors.text.secondary}
+                    strokeWidth={1.5}
+                  />
+                  <Text
+                    className="font-body-medium text-label-sm text-text-secondary uppercase"
+                    style={{ letterSpacing: 0.8 }}
+                  >
+                    Phone Number
+                  </Text>
+                </View>
+                <TextInput
+                  className={`h-[54px] rounded-md border px-[18px] font-body text-[15px] text-text-primary ${
+                    phoneFocused
+                      ? "bg-[rgba(0,229,255,0.04)] border-[rgba(0,229,255,0.5)]"
+                      : "bg-bg-secondary border-border-default"
+                  }`}
+                  value={phone}
+                  onChangeText={(text) => setOnboarding({ phone: text })}
+                  placeholder="+1 555 123 4567"
+                  placeholderTextColor={colors.text.tertiary}
+                  keyboardType="phone-pad"
+                  onFocus={() => setPhoneFocused(true)}
+                  onBlur={() => setPhoneFocused(false)}
+                />
+                <Text className="font-body text-[12px] text-text-tertiary">
+                  Include country code — this becomes your ward's SOS contact.
+                </Text>
+              </View>
+            )}
 
             {/* Email */}
             <View className="gap-2">
@@ -378,6 +447,8 @@ export default function SignUpScreen() {
               </Pressable>
             </View>
           </View>
+          </>
+          )}
 
           {/* ── Footer status decorations ── */}
           <View className="flex-row gap-6 mt-8 opacity-40">

@@ -16,8 +16,11 @@ import { useOnboardingStore } from "../../store/useOnboardingStore";
 import { useSettingsStore } from "../../store/useSettingsStore";
 import { colors } from "../../theme/colors";
 
-// The guardian branch of onboarding — reached from who.tsx when the answer
-// isn't "myself". Deliberately skips every self-monitoring-specific screen
+// The guardian branch of onboarding — reached from guardian-who.tsx after
+// they pick who they're monitoring. accountType is already set to
+// "guardian" by account-type.tsx by this point; this screen is purely a
+// motivational intro, matching the app's one-question-per-screen
+// convention. Deliberately skips every self-monitoring-specific screen
 // (emergency contact, monitoring interval/shake sensitivity, camera/mic/
 // location permissions) since none of those apply to a phone that isn't
 // the one being monitored. Ends the same way plan-reveal.tsx does for the

@@ -10,6 +10,8 @@ export type RiskLevel = "low" | "medium" | "high";
 export type VisionResult = {
   riskLevel: RiskLevel;
   summary: string;
+  concerns?: string[];
+  confidence?: number;
   cappedOut?: boolean;
   todayUsage?: number;
 };

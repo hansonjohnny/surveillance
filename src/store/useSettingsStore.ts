@@ -34,6 +34,17 @@ type Settings = {
   // independent of `plan` — no plan-tier gating or inheritance yet, see
   // supabase/migrations/011_guardian_role.sql.
   role: 'self' | 'guardian';
+  // Whether this account is currently a ward of any guardian (any
+  // guardian_links row with status pending/active where ward_id = this
+  // user). Distinct from `role`, which is chosen once at signup — see
+  // supabase/migrations/012_ward_cannot_be_guardian.sql.
+  isWard: boolean;
+  // Set when a guardian-confirm deep link arrives while signed out —
+  // holds the linkId so sign-in can route straight back to it afterward,
+  // instead of the normal post-sign-in destination. Same job
+  // onboardingResumePath does for regular onboarding. See
+  // guardian-confirm.tsx and (auth)/sign-in.tsx.
+  pendingGuardianConfirmLinkId: string | null;
 };
 
 type SettingsStore = Settings & {
@@ -44,6 +55,7 @@ type SettingsStore = Settings & {
   setTodayUsage: (count: number) => void;
   resetUsageIfNewDay: () => void;
   setRole: (role: 'self' | 'guardian') => void;
+  setIsWard: (isWard: boolean) => void;
 };
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -68,10 +80,13 @@ export const useSettingsStore = create<SettingsStore>()(
       todayUsage: 0,
       usageDate: null,
       role: 'self',
+      isWard: false,
+      pendingGuardianConfirmLinkId: null,
 
       updateSettings: (partial) => set(partial),
       setPlan: (plan) => set({ plan }),
       setRole: (role) => set({ role }),
+      setIsWard: (isWard) => set({ isWard }),
       setTodayUsage: (count) => {
         const today = new Date().toISOString().split('T')[0];
         set((s) => s.usageDate !== today ? { todayUsage: 0, usageDate: today } : { todayUsage: count, usageDate: today });

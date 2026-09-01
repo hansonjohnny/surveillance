@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { signIn } from '../../lib/auth';
+import { resolvePostSignInDestination, signIn } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
@@ -56,19 +56,30 @@ export default function SignInScreen() {
       return;
     }
 
-    // A successful sign-in proves the user registered and completed onboarding.
-    // Restore the flag in case AsyncStorage was wiped (e.g. Android reinstall).
-    useSettingsStore.getState().markOnboardingComplete();
+    // A pending guardian-confirm link (set by guardian-confirm.tsx when
+    // the person had to sign in first) takes priority — but don't
+    // navigate here. _layout.tsx's routing effect already reacts to
+    // isAuthenticated flipping true and routes there itself; issuing our
+    // own router.replace() here too would race it.
+    if (useSettingsStore.getState().pendingGuardianConfirmLinkId) {
+      return;
+    }
 
-    // Pull contact and settings back from Supabase in case local
-    // AsyncStorage was wiped — fire and forget, don't block navigation.
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user?.id) {
-        useOnboardingStore.getState().hydrateFromSupabase(data.user.id);
-      }
-    });
+    const { data: { user } } = await supabase.auth.getUser();
 
-    router.replace('/(tabs)/home');
+    if (!user) {
+      router.replace('/(tabs)/home'); // defensive fallback, shouldn't happen
+      return;
+    }
+
+    // Determines role/ward-based routing and marks onboarding complete
+    // (deferred for a ward's first sign-in — see the function itself).
+    // Not calling syncToSupabase here on purpose: that's the one-time
+    // post-confirmation write, already handled in email-confirmed.tsx —
+    // a returning user's sign-in should only ever read, never re-run it.
+    const dest = await resolvePostSignInDestination(user.id);
+    useOnboardingStore.getState().hydrateFromSupabase(user.id);
+    router.replace(dest as never);
   }
 
   return (
@@ -242,7 +253,13 @@ export default function SignInScreen() {
                 <Text className="font-body text-body-md text-text-secondary">
                   Don't have an account?
                 </Text>
-                <Pressable onPress={() => router.replace('/(auth)/sign-up')} hitSlop={6}>
+                <Pressable
+                  onPress={() => router.replace('/(onboarding)/account-type')}
+                  hitSlop={6}
+                >
+                  {/* Routes through onboarding, not straight to the sign-up
+                      form — account-type.tsx is the only place a fresh
+                      account's role (self vs guardian) actually gets chosen. */}
                   <Text className="font-body-medium text-body-md text-accent ml-1.5">
                     Sign up
                   </Text>

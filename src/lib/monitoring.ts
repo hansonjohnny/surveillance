@@ -6,22 +6,69 @@
 
 import { AppState } from "react-native";
 import { useAlertStore } from "../store/useAlertStore";
-import { useLiveShareStore } from "../store/useLiveShareStore";
 import { useSessionStore } from "../store/useSessionStore";
 import { useSettingsStore } from "../store/useSettingsStore";
 import type { Contact, Event, RiskLevel } from "../types";
+import { triggerAlert } from "./alerts";
 import {
   analyseAudioTranscript,
   recordAudioClip,
   transcribeAudio,
 } from "./audio";
-import { photoToBase64, takeSnapshot } from "./camera";
+import { isFrameLikelyCovered, photoToBase64, takeSnapshot } from "./camera";
+import { NO_ANALYSIS_SUMMARY } from "./eventContent";
+import { detectAlarmKeyword } from "./keywordDetection";
 import { generateUUID } from "./id";
 import { getCurrentLocation, reverseGeocode } from "./location";
-import { pushLiveLocationUpdate } from "./liveShare";
 import { sendLocalNotification } from "./notifications";
 import { schedulePendingAlert } from "./pendingAlert";
+import { uploadEventMedia } from "./storage";
 import { analyseImage } from "./vision";
+
+// Fired by the accelerometer listener (lib/sensors.ts — a g-force spike
+// held for 500ms, with a 5s cooldown so one fall doesn't fire
+// repeatedly), started/stopped by useSessionStore alongside the
+// monitoring cycle itself. No AI call, no cancel window — a physical
+// impact is high-confidence on its own, same as Manual SOS.
+export async function handleShakeDetected(): Promise<void> {
+  const { contactName, contactPhone, contactEmail } = useSettingsStore.getState();
+  if (!contactPhone || !contactEmail) {
+    console.warn("[monitoring] Shake detected but no contact configured.");
+    return;
+  }
+
+  const location = await getCurrentLocation();
+  const event: Event = {
+    id: generateUUID(),
+    sessionId: useSessionStore.getState().sessionId ?? generateUUID(),
+    timestamp: Date.now(),
+    riskLevel: "high",
+    aiSummary: "Sudden impact detected.",
+    audioSummary: undefined,
+    audioUri: undefined,
+    photoUri: null,
+    transcript: undefined,
+    location,
+    source: "shake",
+  };
+  useAlertStore.getState().addEvent(event);
+
+  sendLocalNotification(
+    "HIGH RISK DETECTED",
+    "Impact detected — alerting your emergency contact.",
+  ).catch((err) =>
+    console.error("[monitoring] sendLocalNotification (shake) failed:", err),
+  );
+
+  const contact: Contact = {
+    name: contactName || "Emergency Contact",
+    phone: contactPhone,
+    email: contactEmail,
+  };
+  triggerAlert(event, contact).catch((err) =>
+    console.error("[monitoring] Shake triggerAlert failed:", err),
+  );
+}
 
 function combineRisks(a: RiskLevel, b: RiskLevel | null): RiskLevel {
   if (!b) return a;
@@ -34,6 +81,7 @@ export async function runMonitoringCycle(): Promise<void> {
     const {
       isActive,
       sessionId,
+      userId,
       updateRiskLevel,
       updateLocation,
       incrementCycle,
@@ -68,16 +116,6 @@ export async function runMonitoringCycle(): Promise<void> {
     ]);
 
     if (location) updateLocation(location);
-
-    // Only pushed to Supabase while an active, matching share link exists —
-    // most sessions never generate one, so this stays a no-op for them.
-    const activeLink = useLiveShareStore.getState().activeLink;
-    if (location && activeLink && activeLink.sessionId === sessionId) {
-      pushLiveLocationUpdate(sessionId, location.lat, location.lng).catch(
-        (err) =>
-          console.error("[monitoring] pushLiveLocationUpdate failed:", err),
-      );
-    }
 
     // Log the event immediately so it appears in the log without delay.
     // aiSummary and audio fields are placeholders — patched below as AI returns.
@@ -127,8 +165,30 @@ export async function runMonitoringCycle(): Promise<void> {
         .catch(console.error);
     }
 
+    // A covered lens (pocket, hand over camera) wastes a GPT-4o call on a
+    // frame with nothing to see — check for that cheaply before paying for
+    // the real vision call. See lib/camera.ts's isFrameLikelyCovered.
+    const covered = photoUri ? await isFrameLikelyCovered(photoUri) : false;
+
+    // Upload every real (non-covered) captured frame, independent of risk
+    // level — GPT-4o vision already runs on every one of these regardless
+    // of risk (that cost is already being paid), so the extra cost of also
+    // storing the same photo is comparatively small, and a guardian
+    // monitoring a ward benefits from the full visual record, not just
+    // flagged incidents. Old media is swept by the retention job in
+    // supabase/functions/cleanup-old-media rather than kept forever. Fire-
+    // and-forget — never hold up the cycle or an alert on this.
+    if (photoUri && !covered && userId) {
+      uploadEventMedia(userId, event.id, photoUri, "photo").then((path) => {
+        if (path) {
+          useAlertStore.getState().updateEvent(event.id, { photoStoragePath: path });
+          syncEvent();
+        }
+      });
+    }
+
     // Kick off image analysis without awaiting — event is already in the log.
-    const base64 = photoUri ? await photoToBase64(photoUri) : null;
+    const base64 = photoUri && !covered ? await photoToBase64(photoUri) : null;
     const imagePromise = base64
       ? analyseImage(base64, location)
       : Promise.resolve(null);
@@ -144,13 +204,17 @@ export async function runMonitoringCycle(): Promise<void> {
         const riskLevel = result?.riskLevel ?? "low";
         const summary =
           result?.summary ??
-          (isForeground
-            ? "No visual analysis available."
-            : "Camera unavailable while backgrounded.");
+          (covered
+            ? "Camera appears covered — skipped visual analysis this cycle."
+            : isForeground
+              ? NO_ANALYSIS_SUMMARY
+              : "Camera unavailable while backgrounded.");
 
         useAlertStore.getState().updateEvent(event.id, {
           riskLevel,
           aiSummary: summary,
+          concerns: result?.concerns?.length ? result.concerns : null,
+          confidence: typeof result?.confidence === "number" ? result.confidence : null,
         });
         updateRiskLevel(riskLevel, summary);
 
@@ -196,7 +260,7 @@ export async function runMonitoringCycle(): Promise<void> {
       .catch((err) => {
         console.error("[monitoring] analyseImage failed:", err);
         useAlertStore.getState().updateEvent(event.id, {
-          aiSummary: "Visual analysis unavailable.",
+          aiSummary: NO_ANALYSIS_SUMMARY,
         });
         syncEvent();
       });
@@ -220,6 +284,20 @@ export async function runMonitoringCycle(): Promise<void> {
       syncEvent();
     } else {
       useAlertStore.getState().updateEvent(event.id, { audioUri });
+
+      // Same reasoning as the photo upload above — Whisper transcription
+      // already runs on every recorded clip regardless of risk, so upload
+      // unconditionally rather than waiting on a risk level that hasn't
+      // even been determined yet. Fire-and-forget.
+      if (userId) {
+        uploadEventMedia(userId, event.id, audioUri, "audio").then((path) => {
+          if (path) {
+            useAlertStore.getState().updateEvent(event.id, { audioStoragePath: path });
+            syncEvent();
+          }
+        });
+      }
+
       transcribeAudio(audioUri)
         .then(async (transcript) => {
           if (!transcript) {
@@ -231,19 +309,55 @@ export async function runMonitoringCycle(): Promise<void> {
           }
           useAlertStore.getState().updateEvent(event.id, { transcript });
 
-          const { audioSummary, audioRisk } =
+          // Instant, non-AI check — see lib/keywordDetection.ts for why
+          // this doesn't bypass the AI cycle the way shake does.
+          const keywordMatch = detectAlarmKeyword(transcript);
+
+          const { audioSummary, audioRisk, audioConcerns, audioConfidence } =
             await analyseAudioTranscript(transcript);
-          if (audioSummary) {
-            useAlertStore.getState().updateEvent(event.id, { audioSummary });
+
+          // Merge the keyword flag into the AI's own findings so the
+          // guardian sees *why* this escalated even if GPT-4o's own read
+          // of the transcript was more measured.
+          const mergedAudioSummary = keywordMatch
+            ? `Trigger phrase detected: "${keywordMatch}". ${audioSummary ?? ""}`.trim()
+            : audioSummary;
+          const mergedAudioConcerns = keywordMatch
+            ? [`Trigger phrase: "${keywordMatch}"`, ...(audioConcerns ?? [])]
+            : audioConcerns;
+
+          if (mergedAudioSummary) {
+            useAlertStore.getState().updateEvent(event.id, {
+              audioSummary: mergedAudioSummary,
+              audioConcerns: mergedAudioConcerns?.length ? mergedAudioConcerns : null,
+              audioConfidence,
+            });
           }
 
-          const consolidatedRisk = combineRisks(imageRisk, audioRisk);
+          const consolidatedRisk = combineRisks(
+            combineRisks(imageRisk, audioRisk),
+            keywordMatch ? "high" : null,
+          );
+
+          // combineRisks only ever returns the higher of the two — audio
+          // can escalate risk beyond what image analysis alone found. Keep
+          // the event's stored/synced riskLevel (what EventCard's badge and
+          // a linked guardian's dashboard both read) and the session's
+          // last-risk badge in sync with that same consolidated score,
+          // not just whatever the image-only analysis set earlier in this
+          // cycle — otherwise a High audio-only threat can display as Low.
+          if (consolidatedRisk !== imageRisk) {
+            useAlertStore
+              .getState()
+              .updateEvent(event.id, { riskLevel: consolidatedRisk });
+            updateRiskLevel(consolidatedRisk, mergedAudioSummary ?? undefined);
+          }
 
           // Only escalate — never double-alert a level already fired above.
           if (consolidatedRisk === "medium" && imageRisk === "low") {
             sendLocalNotification(
               "Safety alert",
-              `Audio concern detected: ${audioSummary ?? ""}`,
+              `Audio concern detected: ${mergedAudioSummary ?? ""}`,
             ).catch((err) =>
               console.error("[monitoring] sendLocalNotification failed:", err),
             );
@@ -252,7 +366,7 @@ export async function runMonitoringCycle(): Promise<void> {
           if (consolidatedRisk === "high" && imageRisk !== "high") {
             sendLocalNotification(
               "HIGH RISK DETECTED",
-              `Audio threat detected: ${audioSummary ?? ""}`,
+              `Audio threat detected: ${mergedAudioSummary ?? ""}`,
             ).catch((err) =>
               console.error("[monitoring] sendLocalNotification failed:", err),
             );
@@ -266,8 +380,23 @@ export async function runMonitoringCycle(): Promise<void> {
                 phone: contactPhone,
                 email: contactEmail,
               };
+              // `event` is a stale closure from the top of this cycle —
+              // its aiSummary is still the "Analysing scene..." placeholder
+              // (or whatever image analysis found) at this point, not this
+              // audio-driven escalation's reason. Read the current event
+              // back from the store (already patched with the real image
+              // aiSummary/concerns/confidence by the imagePromise handler
+              // above) so the actual SMS/email/call text reflects what was
+              // really detected, not a placeholder.
+              const currentEvent =
+                useAlertStore.getState().events.find((e) => e.id === event.id) ??
+                event;
               schedulePendingAlert(
-                { ...event, audioSummary, riskLevel: consolidatedRisk },
+                {
+                  ...currentEvent,
+                  audioSummary: mergedAudioSummary,
+                  riskLevel: consolidatedRisk,
+                },
                 contact,
               );
             }

@@ -79,6 +79,10 @@ const PERMISSIONS: PermissionItem[] = [
 
 export default function PermissionsScreen() {
   const router = useRouter();
+  // A ward reaches this screen directly from sign-in.tsx (their first
+  // sign-in), skipping the rest of the survey entirely — they exit to
+  // Home instead of the next survey step.
+  const isWard = useSettingsStore((s) => s.isWard);
   const [statuses, setStatuses] = useState<Record<string, PermissionStatus>>({
     camera: "idle",
     microphone: "idle",
@@ -170,7 +174,14 @@ export default function PermissionsScreen() {
           </Text>
         </View>
         <Pressable
-          onPress={() => router.push("/")}
+          onPress={() => {
+            if (isWard) {
+              useSettingsStore.getState().markOnboardingComplete();
+              router.replace("/(tabs)/home" as never);
+              return;
+            }
+            router.push("/");
+          }}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <Text className="font-body-medium text-body-md text-text-secondary">
@@ -353,7 +364,14 @@ export default function PermissionsScreen() {
           <ContinueButton
             onPress={
               allHandled
-                ? () => router.push("/(onboarding)/setup" as never)
+                ? () => {
+                    if (isWard) {
+                      useSettingsStore.getState().markOnboardingComplete();
+                      router.replace("/(tabs)/home" as never);
+                      return;
+                    }
+                    router.push("/(onboarding)/setup" as never);
+                  }
                 : handleGrantPermissions
             }
             enabled={!isGranting}
