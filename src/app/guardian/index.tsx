@@ -20,9 +20,9 @@ import {
   LogOut,
   Pencil,
   Shield,
+  Trash2,
   UserCircle,
   UserPlus,
-  X,
 } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -168,7 +168,7 @@ function WardRow({
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         style={{ padding: 6, marginRight: 4 }}
       >
-        <X size={16} color={MUTED} strokeWidth={1.5} />
+        <Trash2 size={16} color={MUTED} strokeWidth={1.5} />
       </TouchableOpacity>
       <ChevronRight size={18} color={MUTED} strokeWidth={1.5} />
     </TouchableOpacity>
