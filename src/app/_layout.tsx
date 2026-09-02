@@ -50,7 +50,7 @@ import "../../global.css";
 import { PendingAlertBanner } from "../components/alerts/PendingAlertBanner";
 import { checkEscalations } from "../lib/escalation";
 import { startOfflineQueueWatcher } from "../lib/offlineQueue";
-import { setupNotificationHandler } from "../lib/notifications";
+import { registerForPushNotifications, setupNotificationHandler } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 import {
   confirmSafe,
@@ -277,6 +277,21 @@ export default function RootLayout() {
         // sensitivity (see lib/settingsSync.ts) — harmless round-trip for
         // a non-linked user, since it just re-syncs their own values.
         syncSettingsFromSupabase(s.user.id).catch(console.warn);
+
+        // Refreshes the push token on every launch, not just once during
+        // onboarding permissions.tsx — a token can go stale (reinstall, a
+        // new native build, FCM-side rotation) with nothing to notice or
+        // fix it otherwise, silently breaking a guardian's remote
+        // start/stop until someone manually diagnoses it (confirmed this
+        // exact failure: Expo's delivery receipt for a real remote-start
+        // attempt came back "DeviceNotRegistered" — not a battery-
+        // optimization block, just a dead token). Safe to call every
+        // launch — it no-ops the permission prompt when already granted.
+        // Web has no use for this (only a ward's own device registers for
+        // remote-start/stop pushes), so skip it there entirely.
+        if (Platform.OS !== "web") {
+          registerForPushNotifications().catch(console.warn);
+        }
 
         if (!useSettingsStore.getState().onboardingComplete) {
           useSettingsStore.getState().markOnboardingComplete();
