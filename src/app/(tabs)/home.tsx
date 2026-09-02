@@ -82,7 +82,6 @@ export default function HomeScreen() {
   const {
     isActive,
     lastRiskLevel,
-    lastAISummary,
     sessionStartTime,
     startSession,
     stopSession,
@@ -461,27 +460,6 @@ export default function HomeScreen() {
               </Text>
             </View>
           </View>
-          {/* Only show the last summary while a session is actually running
-              — otherwise this can display a stale reading from a session
-              that ended a while ago, implying monitoring is happening when
-              it isn't. */}
-          {isActive && lastAISummary ? (
-            <Text
-              style={{
-                fontFamily: "DMSans_400Regular",
-                fontSize: 12,
-                lineHeight: 18,
-                color: MUTED,
-                marginTop: 8,
-                paddingHorizontal: 4,
-              }}
-              numberOfLines={2}
-            >
-              {lastAISummary}
-            </Text>
-          ) : null}
-
-
           {/* Cap reached banner */}
           {capReached && (
             <View
