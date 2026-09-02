@@ -39,6 +39,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 const BG = "#0A0A0F";
 const CYAN = "#00E5FF";
 const MUTED = "#8888A0";
+// Same interval as guardian/[wardId].tsx's own poll.
+const WARD_LIST_POLL_MS = 10000;
 const RISK_COLORS: Record<RiskLevel, string> = {
   low: "#00E676",
   medium: "#FFD740",
@@ -880,14 +882,23 @@ export default function GuardianListScreen() {
   const refresh = useCallback(async () => {
     setLoading(true);
     const links = await listWards();
-    setWards(
-      links.map((l) => ({
-        ...l,
-        riskLevel: null,
-        lastSeenAt: null,
-        loadingSnapshot: l.status === "active",
-      })),
-    );
+    // Preserve each already-known ward's last snapshot data across a
+    // refresh instead of wiping it back to null every time — this runs on
+    // a 10s poll now (see the useFocusEffect below), so resetting to
+    // null/loading on every tick would flicker "Last seen Never" for a
+    // moment before the fresh fetch below resolves.
+    setWards((prev) => {
+      const byId = new Map(prev.map((w) => [w.id, w]));
+      return links.map((l) => {
+        const existing = byId.get(l.id);
+        return {
+          ...l,
+          riskLevel: existing?.riskLevel ?? null,
+          lastSeenAt: existing?.lastSeenAt ?? null,
+          loadingSnapshot: existing ? existing.loadingSnapshot : l.status === "active",
+        };
+      });
+    });
     setLoading(false);
 
     // Fetch each active ward's latest snapshot for the risk dot / last-seen
@@ -918,9 +929,14 @@ export default function GuardianListScreen() {
       });
   }, []);
 
+  // Same polling pattern as guardian/[wardId].tsx — otherwise "Last seen"
+  // only updates when this screen regains focus (navigate away and back),
+  // not while it's actually being looked at.
   useFocusEffect(
     useCallback(() => {
       refresh();
+      const interval = setInterval(refresh, WARD_LIST_POLL_MS);
+      return () => clearInterval(interval);
     }, [refresh]),
   );
 
