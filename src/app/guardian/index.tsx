@@ -6,6 +6,7 @@ import {
   revokeWardLink,
   type WardLink,
 } from "@/lib/guardian";
+import { showAlert, showConfirm } from "@/lib/platformAlert";
 import { supabase } from "@/lib/supabase";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import type { RiskLevel } from "@/types";
@@ -26,7 +27,6 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert as RNAlert,
   Modal,
   StatusBar,
   Text,
@@ -925,32 +925,21 @@ export default function GuardianListScreen() {
   );
 
   function handleRevoke(ward: WardRowState) {
-    RNAlert.alert(
+    showConfirm(
       "Stop monitoring?",
       `You'll no longer be able to see ${ward.wardEmail ?? "this person"}'s status.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Stop Monitoring",
-          style: "destructive",
-          onPress: async () => {
-            await revokeWardLink(ward.id);
-            refresh();
-          },
-        },
-      ],
+      "Stop Monitoring",
+      async () => {
+        await revokeWardLink(ward.id);
+        refresh();
+      },
     );
   }
 
   function handleSignOut() {
-    RNAlert.alert("Sign Out", "Are you sure you want to sign out?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign Out",
-        style: "destructive",
-        onPress: () => supabase.auth.signOut(),
-      },
-    ]);
+    showConfirm("Sign Out", "Are you sure you want to sign out?", "Sign Out", () => {
+      supabase.auth.signOut();
+    });
   }
 
   // Defense in depth — the real enforcement is the RLS policy and edge
@@ -1069,7 +1058,7 @@ export default function GuardianListScreen() {
               ward={w}
               onPress={() => {
                 if (w.status === "pending") {
-                  RNAlert.alert(
+                  showAlert(
                     "Awaiting confirmation",
                     `${w.wardEmail ?? "This person"} hasn't accepted your request yet — there's nothing to show until they do.`,
                   );

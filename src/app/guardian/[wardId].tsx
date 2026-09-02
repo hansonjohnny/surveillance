@@ -22,6 +22,7 @@ import {
   type RemoteSettings,
 } from "@/lib/settingsSync";
 import { formatTime12h, parseTimeInput } from "@/lib/wellness";
+import { showAlert } from "@/lib/platformAlert";
 import { MonitoringIntervalPicker, type Interval } from "@/components/ui/MonitoringIntervalPicker";
 import { ShakeSensitivityPicker, type Sensitivity } from "@/components/ui/ShakeSensitivityPicker";
 import type { RiskLevel } from "@/types";
@@ -45,7 +46,6 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert as RNAlert,
   Linking,
   Modal,
   ScrollView,
@@ -553,7 +553,7 @@ export default function WardDetailScreen() {
     setRemoteStarting(true);
     const result = await remoteStartWardSession(wardId);
     setRemoteStarting(false);
-    RNAlert.alert(
+    showAlert(
       result.success ? "Start request sent" : "Couldn't start monitoring",
       result.success
         ? "Monitoring will begin on their phone shortly, no action needed on their end."
@@ -566,7 +566,7 @@ export default function WardDetailScreen() {
     setRemoteStopping(true);
     const result = await remoteStopWardSession(wardId);
     setRemoteStopping(false);
-    RNAlert.alert(
+    showAlert(
       result.success ? "Stop request sent" : "Couldn't stop monitoring",
       result.success
         ? "Monitoring will end on their phone shortly."
