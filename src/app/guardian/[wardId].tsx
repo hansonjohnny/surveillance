@@ -16,6 +16,7 @@ import {
 } from "@/lib/guardian";
 import type { Alert, Event } from "@/types";
 import { getDirectionsUrl } from "@/lib/location";
+import { buildDirectionsUrl } from "@/lib/maps";
 import {
   fetchSettings,
   upsertSettings,
@@ -546,6 +547,16 @@ export default function WardDetailScreen() {
     const loc = snapshot?.session?.lastLocation;
     if (!loc) return;
     Linking.openURL(getDirectionsUrl(loc.lat, loc.lng));
+  }
+
+  // Retraces the selected day's whole trail in Google Maps — driving
+  // mode, since a full day's movement can easily exceed what Google's
+  // walking directions will route (the ward's own "retrace my day"
+  // feature elsewhere in the app keeps the walking default; see
+  // lib/maps.ts).
+  function handleGetDayDirections() {
+    const url = buildDirectionsUrl(dayHistory, "driving");
+    if (url) Linking.openURL(url);
   }
 
   async function handleRemoteStart() {
@@ -1084,25 +1095,47 @@ export default function WardDetailScreen() {
                 {dayHistory.length ? `${dayHistory.length} points` : "No location history for this day"}
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={() => {
-                setViewMonth(selectedDate);
-                setCalendarOpen(true);
-              }}
-              activeOpacity={0.8}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "rgba(0, 229, 255, 0.10)",
-                borderWidth: 1,
-                borderColor: "rgba(0, 229, 255, 0.30)",
-              }}
-            >
-              <CalendarIcon size={15} color={CYAN} strokeWidth={2} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {dayHistory.length >= 2 ? (
+                <TouchableOpacity
+                  onPress={handleGetDayDirections}
+                  activeOpacity={0.8}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(0, 229, 255, 0.10)",
+                    borderWidth: 1,
+                    borderColor: "rgba(0, 229, 255, 0.30)",
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Get directions for this day's route"
+                >
+                  <Navigation size={15} color={CYAN} strokeWidth={2} />
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                onPress={() => {
+                  setViewMonth(selectedDate);
+                  setCalendarOpen(true);
+                }}
+                activeOpacity={0.8}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: "rgba(0, 229, 255, 0.10)",
+                  borderWidth: 1,
+                  borderColor: "rgba(0, 229, 255, 0.30)",
+                }}
+              >
+                <CalendarIcon size={15} color={CYAN} strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
           </View>
           <View style={{ flex: 1, marginHorizontal: 20, marginBottom: 20, borderRadius: 16, overflow: "hidden" }}>
             <LiveMap

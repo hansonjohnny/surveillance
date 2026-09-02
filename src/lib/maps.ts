@@ -20,7 +20,10 @@ function sampleWaypoints(points: LatLng[]): LatLng[] {
   return sampled;
 }
 
-export function buildDirectionsUrl(points: LatLng[]): string | null {
+export function buildDirectionsUrl(
+  points: LatLng[],
+  travelMode: "walking" | "driving" = "walking",
+): string | null {
   if (points.length < 2) return null;
 
   const origin = points[0];
@@ -31,7 +34,7 @@ export function buildDirectionsUrl(points: LatLng[]): string | null {
     api: "1",
     origin: `${origin.lat},${origin.lng}`,
     destination: `${destination.lat},${destination.lng}`,
-    travelmode: "walking",
+    travelmode: travelMode,
   });
   if (waypoints.length > 0) {
     params.set(
