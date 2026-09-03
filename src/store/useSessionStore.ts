@@ -7,6 +7,7 @@ import {
 } from "@/lib/location";
 import { handleShakeDetected, runMonitoringCycle } from "@/lib/monitoring";
 import { startHomeGeofencing, stopHomeGeofencing } from "@/tasks/geofenceTask";
+import { syncSurveillanceWidget } from "@/widgets/syncWidget";
 import type { ShakeSensitivity } from "@/lib/sensors";
 import {
   startShakeDetection as _startShakeDetection,
@@ -139,7 +140,15 @@ export const useSessionStore = create<SessionStore>()(
         let intervalId: ReturnType<typeof setInterval> | undefined;
         const delayId = setTimeout(() => {
           runMonitoringCycle();
-          intervalId = setInterval(runMonitoringCycle, intervalSeconds * 1000);
+          // Piggyback the widget's elapsed-timer refresh on the same
+          // cadence as the monitoring cycle itself — no separate interval
+          // needed, and it's already the right cadence (20-60s) for a
+          // glance widget's timer to visibly advance.
+          syncSurveillanceWidget();
+          intervalId = setInterval(() => {
+            runMonitoringCycle();
+            syncSurveillanceWidget();
+          }, intervalSeconds * 1000);
         }, 2000);
         set({
           monitoringCycleCleanup: () => {
@@ -147,6 +156,8 @@ export const useSessionStore = create<SessionStore>()(
             if (intervalId) clearInterval(intervalId);
           },
         });
+
+        syncSurveillanceWidget();
 
         // "Arrived home" geofence (see tasks/geofenceTask.ts) — only
         // meaningful while a session is actually running, so it starts/
@@ -187,6 +198,8 @@ export const useSessionStore = create<SessionStore>()(
           console.error("[useSessionStore] stopHomeGeofencing failed:", err),
         );
 
+        syncSurveillanceWidget();
+
         if (sessionId && userId) {
           supabase
             .from("sessions")
@@ -203,11 +216,16 @@ export const useSessionStore = create<SessionStore>()(
         }
       },
 
-      updateRiskLevel: (level, summary) =>
+      updateRiskLevel: (level, summary) => {
         set((state) => ({
           lastRiskLevel: level,
           ...(summary !== undefined ? { lastAISummary: summary } : {}),
-        })),
+        }));
+        // Covers a shake-triggered High alert too — that path bypasses the
+        // normal monitoring cycle entirely (see lib/monitoring.ts), so
+        // without this the widget wouldn't reflect it until the next tick.
+        syncSurveillanceWidget();
+      },
 
       updateLocation: (location) =>
         set((state) => ({

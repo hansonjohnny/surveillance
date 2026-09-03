@@ -20,6 +20,7 @@ import { generateUUID } from "./id";
 import { sendLocalNotification } from "./notifications";
 import { syncSettingsFromSupabase } from "./settingsSync";
 import { supabase } from "./supabase";
+import { syncSurveillanceWidget } from "../widgets/syncWidget";
 
 export type LocationPermissionStatus = "denied" | "foreground" | "background";
 
@@ -174,7 +175,7 @@ export function getDirectionsUrl(lat: number, lng: number): string {
 
 export const LOCATION_TASK_NAME = "BACKGROUND_LOCATION_TASK";
 
-const SESSION_STORAGE_KEY = "@surveillance_ai/session";
+export const SESSION_STORAGE_KEY = "@surveillance_ai/session";
 const MAX_LOCATION_HISTORY = 2000; // must match useSessionStore's own cap
 
 // Called from tasks/locationTask.ts, which can run in a headless JS context
@@ -234,7 +235,14 @@ export async function updateLocalSessionLocation(
 // updateLocalAlert; the tradeoff there is unchanged from before this
 // fallback existed — the monitoring cycle/shake detection only actually
 // start once the app is next opened.
-export async function beginMonitoringSession(): Promise<void> {
+// `notify` defaults to true (the remote-start push case — the ward wasn't
+// the one who triggered this, so they need telling). The home-screen
+// widget's Start button (widgets/widgetTaskHandler.tsx) is the one other
+// caller, and passes `notify: false` since the ward just tapped it
+// themselves — a "Monitoring Started" notification would be redundant.
+export async function beginMonitoringSession(
+  { notify = true }: { notify?: boolean } = {},
+): Promise<void> {
   try {
     if (useSessionStore.persist.hasHydrated()) {
       if (!useSessionStore.getState().isActive) {
@@ -249,10 +257,12 @@ export async function beginMonitoringSession(): Promise<void> {
         }
 
         useSessionStore.getState().startSession();
-        await sendLocalNotification(
-          "Monitoring Started",
-          "Your guardian started monitoring.",
-        );
+        if (notify) {
+          await sendLocalNotification(
+            "Monitoring Started",
+            "Your guardian started monitoring.",
+          );
+        }
       }
       return;
     }
@@ -276,6 +286,7 @@ export async function beginMonitoringSession(): Promise<void> {
       locationHistory: [],
     };
     await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
+    syncSurveillanceWidget();
 
     await startBackgroundLocationTracking();
 
@@ -291,10 +302,12 @@ export async function beginMonitoringSession(): Promise<void> {
       }
     }
 
-    await sendLocalNotification(
-      "Monitoring Started",
-      "Your guardian started monitoring.",
-    );
+    if (notify) {
+      await sendLocalNotification(
+        "Monitoring Started",
+        "Your guardian started monitoring.",
+      );
+    }
   } catch (err) {
     console.error("[location] beginMonitoringSession failed:", err);
   }
@@ -305,15 +318,19 @@ export async function beginMonitoringSession(): Promise<void> {
 // action (kills the live monitoring-cycle interval and shake-detection
 // listener, not just a flag) and the direct-AsyncStorage fallback for a
 // genuinely cold-started headless context.
-export async function endMonitoringSession(): Promise<void> {
+export async function endMonitoringSession(
+  { notify = true }: { notify?: boolean } = {},
+): Promise<void> {
   try {
     if (useSessionStore.persist.hasHydrated()) {
       if (useSessionStore.getState().isActive) {
         useSessionStore.getState().stopSession();
-        await sendLocalNotification(
-          "Monitoring Stopped",
-          "Your guardian stopped monitoring.",
-        );
+        if (notify) {
+          await sendLocalNotification(
+            "Monitoring Stopped",
+            "Your guardian stopped monitoring.",
+          );
+        }
       }
       return;
     }
@@ -337,6 +354,7 @@ export async function endMonitoringSession(): Promise<void> {
       cycleCount: 0,
     };
     await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
+    syncSurveillanceWidget();
 
     await stopBackgroundLocationTracking();
 
@@ -353,10 +371,12 @@ export async function endMonitoringSession(): Promise<void> {
       }
     }
 
-    await sendLocalNotification(
-      "Monitoring Stopped",
-      "Your guardian stopped monitoring.",
-    );
+    if (notify) {
+      await sendLocalNotification(
+        "Monitoring Stopped",
+        "Your guardian stopped monitoring.",
+      );
+    }
   } catch (err) {
     console.error("[location] endMonitoringSession failed:", err);
   }
