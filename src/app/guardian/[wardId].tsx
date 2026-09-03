@@ -471,7 +471,7 @@ export default function WardDetailScreen() {
       // Falls back to the same defaults the ward's own store starts with —
       // covers a ward who has never opened Settings, so no row exists yet.
       const resolved =
-        s ?? { monitoringInterval: 30, shakeSensitivity: "medium", wellnessCheckInTime: null };
+        s ?? { monitoringInterval: 30, shakeSensitivity: "medium", wellnessCheckInTime: null, homeLat: null, homeLng: null };
       setWardSettings(resolved);
       if (resolved.wellnessCheckInTime) {
         setWellnessTimeInput(formatTime12h(resolved.wellnessCheckInTime));

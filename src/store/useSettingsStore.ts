@@ -22,6 +22,10 @@ type Settings = {
   stealthMode: boolean;
   cameraSoundEnabled: boolean; // false = muted (default); true = shutter sound on
   wellnessCheckInTime: string | null;
+  // "Arrived home" geofence center (see tasks/geofenceTask.ts) -- ward-set
+  // only, synced via lib/settingsSync.ts same as the fields above it.
+  homeLat: number | null;
+  homeLng: number | null;
   logClearScheduledAt: string | null; // ISO datetime — clear event log at this time
   lastAutoCleared: number | null;     // epoch ms — last time the 5-day fallback cleared the log
   onboardingComplete: boolean;
@@ -72,6 +76,8 @@ export const useSettingsStore = create<SettingsStore>()(
       stealthMode: false,
       cameraSoundEnabled: false,
       wellnessCheckInTime: null,
+      homeLat: null,
+      homeLng: null,
       logClearScheduledAt: null,
       lastAutoCleared: null,
       onboardingComplete: false,

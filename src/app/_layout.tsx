@@ -73,6 +73,7 @@ import {
 import "../tasks/wellnessTask";
 import "../tasks/escalationTask";
 import "../tasks/locationTask";
+import "../tasks/geofenceTask";
 import "../tasks/remoteSessionTask";
 import { registerWellnessTask } from "../tasks/wellnessTask";
 import { registerEscalationTask } from "../tasks/escalationTask";

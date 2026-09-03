@@ -29,6 +29,12 @@ export type RemoteSettings = {
   monitoringInterval: 20 | 30 | 60;
   shakeSensitivity: ShakeSensitivity;
   wellnessCheckInTime: string | null;
+  // Ward-set only (see migration 022) -- upsertSettings will happily write
+  // these for whoever calls it, same as every other field, but no
+  // guardian-facing UI ever does; only the ward's own device can actually
+  // be standing at the location to set it.
+  homeLat: number | null;
+  homeLng: number | null;
 };
 
 function isValidInterval(n: number): n is 20 | 30 | 60 {
@@ -44,7 +50,9 @@ export async function fetchSettings(
 ): Promise<RemoteSettings | null> {
   const { data, error } = await supabase
     .from("settings")
-    .select("monitoring_interval, shake_sensitivity, wellness_checkin_time")
+    .select(
+      "monitoring_interval, shake_sensitivity, wellness_checkin_time, home_lat, home_lng",
+    )
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -62,6 +70,8 @@ export async function fetchSettings(
       ? data.shake_sensitivity
       : "medium",
     wellnessCheckInTime: data.wellness_checkin_time ?? null,
+    homeLat: data.home_lat ?? null,
+    homeLng: data.home_lng ?? null,
   };
 }
 
@@ -81,6 +91,12 @@ export async function upsertSettings(
   }
   if (patch.wellnessCheckInTime !== undefined) {
     row.wellness_checkin_time = patch.wellnessCheckInTime;
+  }
+  if (patch.homeLat !== undefined) {
+    row.home_lat = patch.homeLat;
+  }
+  if (patch.homeLng !== undefined) {
+    row.home_lng = patch.homeLng;
   }
 
   const { error } = await supabase
@@ -122,12 +138,14 @@ export async function syncSettingsFromSupabase(userId: string): Promise<void> {
     } else {
       // No row yet -- create one from whatever the local store already
       // has, so a guardian has something to read/write from their side.
-      const { monitoringInterval, shakeSensitivity, wellnessCheckInTime } =
+      const { monitoringInterval, shakeSensitivity, wellnessCheckInTime, homeLat, homeLng } =
         useSettingsStore.getState();
       await upsertSettings(userId, {
         monitoringInterval,
         shakeSensitivity,
         wellnessCheckInTime,
+        homeLat,
+        homeLng,
       });
     }
   } catch (err) {

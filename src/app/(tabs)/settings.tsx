@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Clock,
   Code2,
+  Home,
   Lock,
   LogOut,
   Mail,
@@ -58,6 +59,7 @@ import {
   ShakeSensitivityPicker,
 } from '../../components/ui/ShakeSensitivityPicker';
 import { cancelWellnessCheckIn, scheduleWellnessCheckIn, parseTimeInput, formatTime12h } from '../../lib/wellness';
+import { getCurrentLocation } from '../../lib/location';
 import { supabase } from '../../lib/supabase';
 import { PLANS, capLabel, capPercent, type Plan } from '../../lib/plans';
 import { useAlertStore } from '../../store/useAlertStore';
@@ -311,13 +313,15 @@ function StyledInput(props: React.ComponentProps<typeof TextInput> & { error?: b
   );
 }
 
-function CyanButton({ label, onPress, style }: { label: string; onPress: () => void; style?: any }) {
+function CyanButton({ label, onPress, style, disabled = false }: { label: string; onPress: () => void; style?: any; disabled?: boolean }) {
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.8}
+      disabled={disabled}
       style={[
         { height: 56, borderRadius: 9999, backgroundColor: CYAN, alignItems: 'center', justifyContent: 'center', shadowColor: CYAN, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.45, shadowRadius: 18 },
+        disabled && { opacity: 0.6 },
         style,
       ]}
     >
@@ -778,6 +782,62 @@ function BehaviourModal({
   );
 }
 
+// ─── HomeLocationModal ────────────────────────────────────────────────────────
+
+function HomeLocationModal({
+  visible,
+  isSet,
+  saving,
+  onSetCurrent,
+  onClear,
+  onClose,
+}: {
+  visible: boolean;
+  isSet: boolean;
+  saving: boolean;
+  onSetCurrent: () => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Home Location">
+      <View style={{ paddingHorizontal: 24, gap: 20, paddingBottom: 8 }}>
+        <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: isSet ? `${CYAN}33` : 'rgba(255,255,255,0.08)', flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: isSet ? `${CYAN}1A` : 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+            <Home size={20} color={isSet ? CYAN : '#8888A0'} strokeWidth={1.5} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: 15, color: '#F0F0F5', marginBottom: 4 }}>
+              {isSet ? 'Home is set' : 'No home location set'}
+            </Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 13, color: '#8888A0' }}>
+              {isSet
+                ? 'Your guardian gets a quiet "arrived home safely" notification when you reach this spot during a session.'
+                : 'Set your home so your guardian is reassured the moment you get there.'}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: 12, lineHeight: 18, color: '#555568', paddingHorizontal: 4 }}>
+          Only checked while a session is active. Nothing is shared with your guardian except the fact that you arrived — not your exact address.
+        </Text>
+
+        <CyanButton
+          label={saving ? 'Getting your location…' : isSet ? 'Update to Current Location' : 'Set Current Location as Home'}
+          onPress={onSetCurrent}
+          disabled={saving}
+          style={{ marginTop: 4 }}
+        />
+        {isSet && (
+          <TouchableOpacity onPress={onClear} activeOpacity={0.7} style={{ height: 56, borderRadius: 9999, borderWidth: 1, borderColor: 'rgba(255,61,61,0.30)', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: 15, letterSpacing: 0.3, color: colors.risk.high }}>Clear Home Location</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </Sheet>
+  );
+}
+
 // ─── EventLogModal ────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -1140,6 +1200,8 @@ export default function SettingsScreen() {
   const storedBackupPhone   = useSettingsStore((s) => s.backupContactPhone);
   const storedBackupEmail   = useSettingsStore((s) => s.backupContactEmail);
   const storedWellnessTime  = useSettingsStore((s) => s.wellnessCheckInTime);
+  const storedHomeLat       = useSettingsStore((s) => s.homeLat);
+  const storedHomeLng       = useSettingsStore((s) => s.homeLng);
   const storedLogClearScheduledAt = useSettingsStore((s) => s.logClearScheduledAt);
   const updateSettings      = useSettingsStore((s) => s.updateSettings);
 
@@ -1173,6 +1235,8 @@ export default function SettingsScreen() {
   const [backupContactModalOpen, setBackupContactModalOpen] = useState(false);
   const [monitoringModalOpen, setMonitoringModalOpen] = useState(false);
   const [behaviourModalOpen, setBehaviourModalOpen] = useState(false);
+  const [homeLocationModalOpen, setHomeLocationModalOpen] = useState(false);
+  const [settingHomeLocation, setSettingHomeLocation] = useState(false);
   const [eventLogModalOpen, setEventLogModalOpen] = useState(false);
   const [dangerModalOpen, setDangerModalOpen] = useState(false);
   const [devToolsOpen, setDevToolsOpen] = useState(false);
@@ -1217,6 +1281,8 @@ export default function SettingsScreen() {
     shake_sensitivity?: string;
     stealth_mode?: boolean;
     wellness_checkin_time?: string | null;
+    home_lat?: number | null;
+    home_lng?: number | null;
   }) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.id) return;
@@ -1285,6 +1351,34 @@ export default function SettingsScreen() {
       updateSettings({ wellnessCheckInTime: parsed });
       syncSettingsRow({ wellness_checkin_time: parsed });
     }
+  }
+
+  // ── Home location handlers ───────────────────────────────────────────────────
+  // Ward-set-only (see tasks/geofenceTask.ts) -- only the ward can actually be
+  // standing at the location, so there is no remote/guardian-write path here,
+  // unlike monitoring interval / sensitivity / wellness check-in above.
+
+  async function handleSetHomeLocation() {
+    setSettingHomeLocation(true);
+    try {
+      const coords = await getCurrentLocation();
+      if (!coords) {
+        Alert.alert(
+          'Location unavailable',
+          'Enable location permissions to set your current spot as home.',
+        );
+        return;
+      }
+      updateSettings({ homeLat: coords.lat, homeLng: coords.lng });
+      syncSettingsRow({ home_lat: coords.lat, home_lng: coords.lng });
+    } finally {
+      setSettingHomeLocation(false);
+    }
+  }
+
+  function handleClearHomeLocation() {
+    updateSettings({ homeLat: null, homeLng: null });
+    syncSettingsRow({ home_lat: null, home_lng: null });
   }
 
   // ── Log auto-clear handlers ──────────────────────────────────────────────────
@@ -1366,7 +1460,7 @@ export default function SettingsScreen() {
               await AsyncStorage.clear();
               await SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, homeLat: null, homeLng: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1411,7 +1505,7 @@ export default function SettingsScreen() {
                 SecureStore.deleteItemAsync(ONBOARDING_SECURE_KEY),
               ]);
               useOnboardingStore.setState({ data: {}, isComplete: false });
-              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
+              useSettingsStore.setState({ contactName: '', contactPhone: '', contactEmail: '', backupContactName: '', backupContactPhone: '', backupContactEmail: '', monitoringInterval: 30, shakeSensitivity: 'medium', stealthMode: false, cameraSoundEnabled: false, wellnessCheckInTime: null, homeLat: null, homeLng: null, logClearScheduledAt: null, lastAutoCleared: null, onboardingComplete: false, plan: 'free', todayUsage: 0, usageDate: null, role: 'self', isWard: false, pendingGuardianConfirmLinkId: null });
               useSessionStore.setState({ userId: null, isActive: false, sessionId: null, sessionStartTime: null, lastRiskLevel: null, lastAISummary: null, lastLocation: null, cycleCount: 0 });
               useAlertStore.setState({ events: [], alerts: [] });
               await supabase.auth.signOut();
@@ -1581,6 +1675,12 @@ export default function SettingsScreen() {
               label="Behaviour"
               value={behaviourValue}
               onPress={() => setBehaviourModalOpen(true)}
+            />
+            <MenuRow
+              icon={<Home size={18} color={storedHomeLat != null ? CYAN : '#8888A0'} strokeWidth={1.5} />}
+              label="Home Location"
+              value={storedHomeLat != null ? 'Set' : 'Not set'}
+              onPress={() => setHomeLocationModalOpen(true)}
               last
             />
           </MenuGroup>
@@ -1718,6 +1818,14 @@ export default function SettingsScreen() {
         onWellnessTimeSubmit={handleWellnessTimeSubmit}
         onClose={() => setBehaviourModalOpen(false)}
         wellnessReadOnly={isWard}
+      />
+      <HomeLocationModal
+        visible={homeLocationModalOpen}
+        isSet={storedHomeLat != null && storedHomeLng != null}
+        saving={settingHomeLocation}
+        onSetCurrent={handleSetHomeLocation}
+        onClear={() => { handleClearHomeLocation(); setHomeLocationModalOpen(false); }}
+        onClose={() => setHomeLocationModalOpen(false)}
       />
       <EventLogModal
         visible={eventLogModalOpen}

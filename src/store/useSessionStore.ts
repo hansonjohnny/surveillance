@@ -6,6 +6,7 @@ import {
   stopBackgroundLocationTracking,
 } from "@/lib/location";
 import { handleShakeDetected, runMonitoringCycle } from "@/lib/monitoring";
+import { startHomeGeofencing, stopHomeGeofencing } from "@/tasks/geofenceTask";
 import type { ShakeSensitivity } from "@/lib/sensors";
 import {
   startShakeDetection as _startShakeDetection,
@@ -146,6 +147,17 @@ export const useSessionStore = create<SessionStore>()(
             if (intervalId) clearInterval(intervalId);
           },
         });
+
+        // "Arrived home" geofence (see tasks/geofenceTask.ts) — only
+        // meaningful while a session is actually running, so it starts/
+        // stops with the session rather than at app launch. No-ops
+        // silently if the ward has never set a home location.
+        const { homeLat, homeLng } = useSettingsStore.getState();
+        if (homeLat != null && homeLng != null) {
+          startHomeGeofencing(homeLat, homeLng).catch((err) =>
+            console.error("[useSessionStore] startHomeGeofencing failed:", err),
+          );
+        }
       },
 
       stopSession: () => {
@@ -170,6 +182,10 @@ export const useSessionStore = create<SessionStore>()(
 
         get().monitoringCycleCleanup?.();
         set({ monitoringCycleCleanup: null });
+
+        stopHomeGeofencing().catch((err) =>
+          console.error("[useSessionStore] stopHomeGeofencing failed:", err),
+        );
 
         if (sessionId && userId) {
           supabase
