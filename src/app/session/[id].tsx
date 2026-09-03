@@ -27,6 +27,19 @@ function fmtTime(ts: number) {
   });
 }
 
+// The "2h 14m monitored · all clear" retention-hook line from
+// surveillance_ai_plan.md — a friendly one-line outcome on top of the
+// raw risk-count legend below it.
+function summaryLine(riskCounts: { low: number; medium: number; high: number }): string {
+  if (riskCounts.high > 0) {
+    return `${riskCounts.high} high-risk alert${riskCounts.high > 1 ? "s" : ""} sent`;
+  }
+  if (riskCounts.medium > 0) {
+    return `${riskCounts.medium} medium risk${riskCounts.medium > 1 ? "s" : ""} detected`;
+  }
+  return "All clear";
+}
+
 export default function SessionDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -131,6 +144,52 @@ export default function SessionDetailScreen() {
             >
               {fmtTime(session.startTime)} → {fmtTime(session.endTime)} ·{" "}
               {fmtDuration(session.endTime - session.startTime)}
+            </Text>
+          </View>
+        </View>
+
+        {/* Reward-moment headline — see summaryLine() above */}
+        <View style={{ alignItems: "center", paddingHorizontal: 16, paddingTop: 20 }}>
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingVertical: 16,
+              borderRadius: 20,
+              backgroundColor: "rgba(10, 10, 15, 0.85)",
+              borderWidth: 1,
+              borderColor:
+                session.riskCounts.high > 0
+                  ? "rgba(255, 61, 61, 0.35)"
+                  : session.riskCounts.medium > 0
+                    ? "rgba(255, 215, 64, 0.35)"
+                    : "rgba(0, 230, 118, 0.35)",
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Outfit_700Bold",
+                fontSize: 20,
+                color: "#F0F0F5",
+                marginBottom: 4,
+              }}
+            >
+              {fmtDuration(session.endTime - session.startTime)} monitored
+            </Text>
+            <Text
+              style={{
+                fontFamily: "DMSans_500Medium",
+                fontSize: 13,
+                letterSpacing: 0.3,
+                color:
+                  session.riskCounts.high > 0
+                    ? RISK_HIGH
+                    : session.riskCounts.medium > 0
+                      ? RISK_MEDIUM
+                      : RISK_LOW,
+              }}
+            >
+              {summaryLine(session.riskCounts)}
             </Text>
           </View>
         </View>

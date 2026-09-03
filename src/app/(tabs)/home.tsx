@@ -141,10 +141,15 @@ export default function HomeScreen() {
   }, [isActive]);
 
   // Archives the just-ended session's risk-tagged path so it can be reviewed
-  // later from the History tab, then stops the session as normal.
+  // later from the History tab, then stops the session and lands on its
+  // recap (session/[id].tsx) as a reward moment — the "2h 14m monitored,
+  // all clear" retention hook from surveillance_ai_plan.md, reusing the
+  // map/duration/risk-count screen that already existed for browsing past
+  // sessions rather than building a second, lighter summary UI.
   function handleStopSession() {
     const { sessionId, sessionStartTime, locationHistory } =
       useSessionStore.getState();
+    let archivedId: string | null = null;
     if (sessionId && sessionStartTime) {
       const events = useAlertStore.getState().events;
       const path = buildRiskTaggedPath(locationHistory, events, sessionId);
@@ -156,9 +161,13 @@ export default function HomeScreen() {
           path,
           riskCounts: countRisks(path),
         });
+        archivedId = sessionId;
       }
     }
     stopSession();
+    if (archivedId) {
+      router.push({ pathname: "/session/[id]", params: { id: archivedId } });
+    }
   }
 
   function handleManualSOS() {
