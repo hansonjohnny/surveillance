@@ -1,10 +1,14 @@
 import { LiveMap } from "@/components/map/LiveMap";
+import { ShareCard } from "@/components/ShareCard";
 import { buildDirectionsUrl } from "@/lib/maps";
 import { useSessionHistoryStore } from "@/store/useSessionHistoryStore";
+import * as Sharing from "expo-sharing";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Navigation } from "lucide-react-native";
-import { Linking, StatusBar, Text, TouchableOpacity, View } from "react-native";
+import { ArrowLeft, Navigation, Share2 } from "lucide-react-native";
+import { useRef, useState } from "react";
+import { Alert, Linking, StatusBar, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import type { ViewShotRef } from "react-native-view-shot";
 
 const BG = "#0A0A0F";
 const MUTED = "#8888A0";
@@ -46,6 +50,8 @@ export default function SessionDetailScreen() {
   const session = useSessionHistoryStore((s) =>
     s.sessions.find((r) => r.id === id),
   );
+  const shareCardRef = useRef<ViewShotRef>(null);
+  const [sharing, setSharing] = useState(false);
 
   if (!session) {
     return (
@@ -78,6 +84,29 @@ export default function SessionDetailScreen() {
   function handleGetDirections() {
     const url = buildDirectionsUrl(session.path);
     if (url) Linking.openURL(url).catch(() => {});
+  }
+
+  async function handleShare() {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const capture = shareCardRef.current?.capture;
+      const uri = await capture?.();
+      if (!uri) return;
+      const available = await Sharing.isAvailableAsync();
+      if (!available) {
+        Alert.alert("Sharing unavailable", "Your device doesn't support sharing images.");
+        return;
+      }
+      await Sharing.shareAsync(uri, {
+        mimeType: "image/png",
+        dialogTitle: "Share your protected session",
+      });
+    } catch (err) {
+      console.error("[session detail] share failed:", err);
+    } finally {
+      setSharing(false);
+    }
   }
 
   return (
@@ -146,6 +175,24 @@ export default function SessionDetailScreen() {
               {fmtDuration(session.endTime - session.startTime)}
             </Text>
           </View>
+
+          <TouchableOpacity
+            onPress={handleShare}
+            disabled={sharing}
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(10, 10, 15, 0.85)",
+              borderWidth: 1,
+              borderColor: "rgba(255, 255, 255, 0.12)",
+              opacity: sharing ? 0.5 : 1,
+            }}
+          >
+            <Share2 size={18} color={CYAN} strokeWidth={1.5} />
+          </TouchableOpacity>
         </View>
 
         {/* Reward-moment headline — see summaryLine() above */}
@@ -277,6 +324,18 @@ export default function SessionDetailScreen() {
           GET DIRECTIONS
         </Text>
       </TouchableOpacity>
+
+      {/* Off-screen — never shown, only captured by handleShare() above.
+          The OS share sheet's own thumbnail preview stands in for an
+          on-screen preview, so there's no separate preview modal. */}
+      <View style={{ position: "absolute", top: -9999, left: -9999 }}>
+        <ShareCard
+          ref={shareCardRef}
+          durationLabel={fmtDuration(session.endTime - session.startTime)}
+          outcomeLabel={summaryLine(session.riskCounts)}
+          riskCounts={session.riskCounts}
+        />
+      </View>
     </View>
   );
 }
