@@ -544,7 +544,7 @@ export default function SpeedScreen() {
           </Pressable>
 
           <ContinueButton
-            onPress={() => router.push("/(onboarding)/preferences" as any)}
+            onPress={() => router.push("/(onboarding)/practice-sos" as any)}
           />
         </View>
       </SafeAreaView>
